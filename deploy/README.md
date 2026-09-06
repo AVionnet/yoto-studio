@@ -18,9 +18,15 @@ OAuth de Yoto exigent tous les trois un contexte sécurisé.
 
 ## Installation
 
+Le dépôt est privé : donner au serveur une clé de déploiement en lecture seule.
+
 ```sh
-mkdir -p /docker/yoto-studio && cd /docker/yoto-studio
-curl -fsSLO https://raw.githubusercontent.com/AVionnet/yoto-studio/main/deploy/docker-compose.yml
+ssh-keygen -t ed25519 -f /root/.ssh/yoto-deploy -N '' -C 'yoto-studio deploy'
+# puis, depuis un poste authentifié :
+#   gh repo deploy-key add /root/.ssh/yoto-deploy.pub -R AVionnet/yoto-studio -t kvm
+
+git clone git@github.com:AVionnet/yoto-studio.git /docker/yoto-studio
+cd /docker/yoto-studio && cp deploy/docker-compose.yml .
 ```
 
 Créer le `.env` à côté :
@@ -48,11 +54,10 @@ URLs* du portail développeur Yoto. Sans lui, la connexion échoue avec une erre
 
 ## Mises à jour
 
-L'image se construit directement depuis GitHub, il n'y a donc rien à cloner sur le serveur :
-
 ```sh
 cd /docker/yoto-studio
-docker compose build --pull --no-cache && docker compose up -d
+git pull && cp deploy/docker-compose.yml .
+docker compose build --pull && docker compose up -d
 ```
 
 Les migrations de schéma s'appliquent seules au démarrage.

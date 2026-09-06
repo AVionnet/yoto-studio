@@ -6,8 +6,9 @@
 
 services:
   app:
+    # Le dépôt est privé : on construit depuis le clone local, pas depuis l'URL Git.
     build:
-      context: https://github.com/AVionnet/yoto-studio.git#main
+      context: .
     image: yoto-studio:latest
     container_name: ${COMPOSE_PROJECT_NAME}
     restart: unless-stopped
