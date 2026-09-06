@@ -1,0 +1,28 @@
+# /etc/systemd/system/yoto-studio.service
+[Unit]
+Description=Yoto Studio
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=yoto
+WorkingDirectory=/srv/yoto-studio
+EnvironmentFile=/srv/yoto-studio/.env
+ExecStart=/usr/bin/node --env-file=/srv/yoto-studio/.env dist/server.js
+Restart=always
+RestartSec=5
+
+# La base et les fichiers de travail vivent hors du dépôt, pour survivre aux déploiements.
+Environment=DATA_DIR=/var/lib/yoto-studio/data
+Environment=MEDIA_DIR=/var/lib/yoto-studio/media
+
+# Durcissement : le service n'a besoin d'écrire que dans son état.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/yoto-studio
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,19 @@
+# /etc/caddy/Caddyfile
+#
+# HTTPS n'est pas un confort ici : le micro (getUserMedia) et le NFC (Web NFC) exigent tous deux
+# un contexte securise, et Yoto refuse un callback OAuth en clair. Caddy obtient et renouvelle
+# le certificat tout seul, a condition que le domaine pointe deja sur cette machine.
+
+yoto.vadech.tech {
+	encode zstd gzip
+
+	# Les televersements audio et les enregistrements depassent la limite par defaut.
+	request_body {
+		max_size 200MB
+	}
+
+	reverse_proxy 127.0.0.1:3000 {
+		# Le flux de progression est en SSE : sans ca, la barre ne bouge qu'a la fin.
+		flush_interval -1
+	}
+}

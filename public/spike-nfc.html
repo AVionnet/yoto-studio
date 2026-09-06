@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Yoto Studio — sonde NFC</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f5f1; --fg: #1d1b19; --muted: #6b6560;
+    --card: #ffffff; --line: #dcd7cf;
+    --ok: #1d6a4f; --warn: #8a5a12; --err: #9b2c2c; --accent: #2b5f8a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #171614; --fg: #eceae6; --muted: #a09a93;
+      --card: #211f1d; --line: #38342f;
+      --ok: #6fd0a6; --warn: #e0b062; --err: #f08a8a; --accent: #8ec0e8;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 20px 16px 64px;
+    background: var(--bg); color: var(--fg);
+    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    max-width: 640px; margin-inline: auto;
+  }
+  h1 { font-size: 21px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); font-size: 14px; margin: 0 0 20px; }
+  button {
+    font: inherit; font-weight: 600; border: 0; border-radius: 12px;
+    padding: 15px 20px; width: 100%; cursor: pointer;
+    background: var(--accent); color: #fff; margin-bottom: 10px;
+  }
+  button.ghost { background: transparent; color: var(--accent); border: 1.5px solid var(--line); }
+  button:disabled { opacity: .45; cursor: default; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 14px 16px; margin-bottom: 12px;
+  }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .07em;
+             color: var(--muted); margin: 0 0 10px; font-weight: 700; }
+  dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; }
+  dt { color: var(--muted); font-size: 13px; white-space: nowrap; }
+  dd { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+       font-size: 13px; word-break: break-all; }
+  .verdict { font-weight: 700; padding: 12px 14px; border-radius: 12px; margin-bottom: 12px; }
+  .verdict.ok   { background: color-mix(in srgb, var(--ok) 15%, transparent);   color: var(--ok); }
+  .verdict.warn { background: color-mix(in srgb, var(--warn) 15%, transparent); color: var(--warn); }
+  .verdict.err  { background: color-mix(in srgb, var(--err) 15%, transparent);  color: var(--err); }
+  .status { color: var(--muted); font-size: 14px; min-height: 22px; margin-bottom: 12px; }
+  .pulse { animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .45 } }
+  .masked { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+  pre { background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
+        padding: 10px; overflow-x: auto; font-size: 12px; margin: 0; }
+  .note { font-size: 13px; color: var(--muted); margin-top: 18px; }
+  .note code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<h1>Sonde NFC</h1>
+<p class="sub">Étape&nbsp;0 — découvrir ce que porte réellement une carte Yoto.</p>
+
+<div id="unsupported" class="verdict err" hidden></div>
+
+<button id="scan">Lire une carte</button>
+<button id="reset" class="ghost" hidden>Effacer et relire</button>
+<p class="status" id="status"></p>
+
+<div id="out"></div>
+
+<p class="note">
+  Web NFC n'existe que sur <strong>Chrome pour Android</strong>, en HTTPS.
+  Le <code>token</code> est un identifiant d'accès&nbsp;: il est masqué par défaut, touche-le pour
+  l'afficher. Ne le partage pas.
+</p>
+
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const scanBtn = $('scan'), resetBtn = $('reset'), statusEl = $('status'), out = $('out');
+
+  if (!('NDEFReader' in window)) {
+    $('unsupported').hidden = false;
+    $('unsupported').textContent =
+      "Web NFC indisponible ici. Ouvre cette page dans Chrome sur Android, en HTTPS.";
+    scanBtn.disabled = true;
+  }
+
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  function decodeRecord(rec) {
+    const base = { recordType: rec.recordType, mediaType: rec.mediaType || null, id: rec.id || null };
+    try {
+      if (rec.recordType === 'url' || rec.recordType === 'absolute-url') {
+        return { ...base, value: new TextDecoder().decode(rec.data) };
+      }
+      if (rec.recordType === 'text') {
+        return { ...base, value: new TextDecoder(rec.encoding || 'utf-8').decode(rec.data),
+                 lang: rec.lang || null };
+      }
+      if (rec.data) {
+        const bytes = new Uint8Array(rec.data.buffer || rec.data);
+        return { ...base, hex: [...bytes].map((b) => b.toString(16).padStart(2, '0')).join(' ') };
+      }
+    } catch (e) {
+      return { ...base, error: String(e) };
+    }
+    return base;
+  }
+
+  // https://yoto.io/<cardId>?<token>  — le token est la query brute, pas un couple cle=valeur.
+  function parseYotoUrl(url) {
+    let u;
+    try { u = new URL(url); } catch { return null; }
+    if (!/(^|\.)yoto\.io$/i.test(u.hostname)) return null;
+    const cardId = u.pathname.replace(/^\/+|\/+$/g, '');
+    const token = u.search.replace(/^\?/, '');
+    return { cardId, token, origin: u.origin };
+  }
+
+  function render(serialNumber, records) {
+    const parts = [];
+    const yoto = records.map((r) => r.value && parseYotoUrl(r.value)).find(Boolean);
+
+    if (records.length === 0) {
+      parts.push(`<div class="verdict warn">Carte <strong>vierge</strong> — aucun enregistrement NDEF.
+        Elle doit être liée une fois dans l'app Yoto avant de pouvoir servir.</div>`);
+    } else if (yoto) {
+      parts.push(`<div class="verdict ok">Carte <strong>déjà liée</strong> — elle porte une URL Yoto.
+        Son <code>cardId</code> peut être enrôlé dans le pool.</div>`);
+    } else {
+      parts.push(`<div class="verdict warn">Carte formatée NDEF, mais <strong>sans URL Yoto</strong>.
+        C'est peut-être un tag vierge déjà formaté, ou une carte d'un autre système.</div>`);
+    }
+
+    if (yoto) {
+      parts.push(`<div class="card"><h2>Identité Yoto</h2><dl>
+        <dt>cardId</dt><dd>${esc(yoto.cardId)}</dd>
+        <dt>longueur</dt><dd>${yoto.cardId.length} caractères</dd>
+        <dt>token</dt><dd><span class="masked" data-reveal="${esc(yoto.token)}">
+          ${yoto.token ? 'masqué — toucher pour afficher' : '(absent)'}</span></dd>
+        <dt>octets</dt><dd>${new TextEncoder().encode(
+          `${yoto.origin}/${yoto.cardId}${yoto.token ? '?' + yoto.token : ''}`).length}</dd>
+      </dl></div>`);
+    }
+
+    parts.push(`<div class="card"><h2>Tag</h2><dl>
+      <dt>UID</dt><dd>${esc(serialNumber || '(non exposé)')}</dd>
+      <dt>enregistrements</dt><dd>${records.length}</dd>
+    </dl></div>`);
+
+    records.forEach((r, i) => {
+      const rows = Object.entries(r)
+        .filter(([k, v]) => v !== null && v !== undefined)
+        .map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('');
+      parts.push(`<div class="card"><h2>Enregistrement ${i + 1}</h2><dl>${rows}</dl></div>`);
+    });
+
+    const dump = JSON.stringify({ serialNumber, records }, null, 2);
+    parts.push(`<div class="card"><h2>Relevé brut</h2><pre>${esc(dump)}</pre></div>`);
+
+    out.innerHTML = parts.join('');
+    out.querySelectorAll('.masked').forEach((el) => {
+      el.addEventListener('click', () => { el.textContent = el.dataset.reveal || '(vide)';
+                                           el.classList.remove('masked'); });
+    });
+  }
+
+  scanBtn.addEventListener('click', async () => {
+    out.innerHTML = '';
+    statusEl.className = 'status pulse';
+    statusEl.textContent = 'Approche la carte du dos du téléphone…';
+    scanBtn.disabled = true;
+    try {
+      const reader = new NDEFReader();
+      await reader.scan();
+      reader.addEventListener('readingerror', () => {
+        statusEl.className = 'status';
+        statusEl.textContent = 'Lecture impossible — représente la carte.';
+      });
+      reader.addEventListener('reading', ({ serialNumber, message }) => {
+        statusEl.className = 'status';
+        statusEl.textContent = 'Carte lue.';
+        render(serialNumber, [...message.records].map(decodeRecord));
+        resetBtn.hidden = false;
+      });
+    } catch (err) {
+      statusEl.className = 'status';
+      statusEl.textContent = '';
+      scanBtn.disabled = false;
+      out.innerHTML = `<div class="verdict err">${esc(err.name)} — ${esc(err.message)}${
+        err.name === 'NotAllowedError'
+          ? '<br><br>Autorise le NFC pour ce site, et vérifie qu\'il est activé dans les réglages.'
+          : ''}</div>`;
+    }
+  });
+
+  resetBtn.addEventListener('click', () => {
+    out.innerHTML = ''; resetBtn.hidden = true; scanBtn.disabled = false;
+    statusEl.className = 'status'; statusEl.textContent = '';
+  });
+})();
+</script>
+</body>
+</html>
