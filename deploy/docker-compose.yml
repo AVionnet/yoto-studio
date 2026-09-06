@@ -1,0 +1,31 @@
+# /docker/yoto-studio/docker-compose.yml
+#
+# Traefik tourne en mode host et découvre les services par le socket Docker
+# (`--providers.docker`, `exposedbydefault=false`) : il suffit donc d'étiqueter le conteneur.
+# Aucun port n'est publié sur l'hôte — Traefik joint le conteneur par son IP de bridge.
+
+services:
+  app:
+    build:
+      context: https://github.com/AVionnet/yoto-studio.git#main
+    image: yoto-studio:latest
+    container_name: ${COMPOSE_PROJECT_NAME}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PUBLIC_BASE_URL: https://${TRAEFIK_HOST}
+      DATA_DIR: /data
+      MEDIA_DIR: /media
+    volumes:
+      - data:/data
+      - media:/media
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}.rule=Host(`${TRAEFIK_HOST}`)
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}.entrypoints=websecure
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}.tls.certresolver=letsencrypt
+      - traefik.http.services.${COMPOSE_PROJECT_NAME}.loadbalancer.server.port=3000
+
+volumes:
+  data:
+  media:

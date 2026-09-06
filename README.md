@@ -42,7 +42,7 @@ YouTube.
 
 ## Déploiement
 
-Voir [deploy/README.md](deploy/README.md).
+Conteneur Docker derrière Traefik. Voir [deploy/README.md](deploy/README.md).
 
 ## Licence
 
