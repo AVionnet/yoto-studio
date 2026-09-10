@@ -264,6 +264,22 @@ export async function cutSegment(
   ]);
 }
 
+export interface Proposal {
+  totalMs: number;
+  /** Zone utile, bornes de silence rognees. */
+  range: Segment;
+  segments: Segment[];
+}
+
+/** Le flux complet : sonde, detecte, propose. Une seule passe ffmpeg pour l'analyse. */
+export async function proposeSegments(path: string, options: BoundaryOptions = {}): Promise<Proposal> {
+  const totalMs = await probeDurationMs(path);
+  const silences = await detectSilences(path);
+  const range = contentRange(silences, totalMs);
+  const boundaries = proposeBoundaries(silences, totalMs, options);
+  return { totalMs, range, segments: segmentsFrom(boundaries, totalMs, range) };
+}
+
 /** Seuil au-dela duquel une extremite n'est plus du silence : la coupe a mordu dans le son. */
 export const EDGE_SILENCE_DB = -40;
 const EDGE_WINDOW_S = 0.6;

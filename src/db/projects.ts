@@ -105,6 +105,26 @@ export function setProjectCard(id: number, cardId: string): void {
     .run(cardId, id);
 }
 
+/** Depose un long enregistrement en attente de decoupage : bascule le projet en revue. */
+export function setProjectSource(id: number, path: string): void {
+  db()
+    .prepare(
+      `UPDATE projects SET source_path = ?, state = 'reviewing', updated_at = datetime('now')
+       WHERE id = ?`,
+    )
+    .run(path, id);
+}
+
+/** Le decoupage est valide et les pistes existent : le fichier long ne sert plus. */
+export function clearProjectSource(id: number): void {
+  db()
+    .prepare(
+      `UPDATE projects SET source_path = NULL, state = 'draft', updated_at = datetime('now')
+       WHERE id = ?`,
+    )
+    .run(id);
+}
+
 export function addTrack(fields: {
   projectId: number;
   idx: number;
@@ -160,6 +180,18 @@ export function setTrackIcon(
   db()
     .prepare(`UPDATE tracks SET icon_media_id = ?, icon_url = ? WHERE project_id = ? AND idx = ?`)
     .run(mediaId, mediaId ? url : null, projectId, idx);
+}
+
+/** Niveau mesure en tete et en queue d'une piste : sert au controle de coupe (<= -40 dB). */
+export function setTrackEdges(
+  projectId: number,
+  idx: number,
+  headDb: number | null,
+  tailDb: number | null,
+): void {
+  db()
+    .prepare(`UPDATE tracks SET head_db = ?, tail_db = ? WHERE project_id = ? AND idx = ?`)
+    .run(headDb, tailDb, projectId, idx);
 }
 
 export function setTrackTranscode(

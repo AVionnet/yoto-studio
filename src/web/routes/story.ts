@@ -12,9 +12,16 @@ import { pipeline } from 'node:stream/promises';
 
 import type { FastifyInstance } from 'fastify';
 
-import { addTrack, createProject, getProject, listTracks, setTrackFile } from '../../db/projects.ts';
+import {
+  addTrack,
+  createProject,
+  getProject,
+  listTracks,
+  setTrackEdges,
+  setTrackFile,
+} from '../../db/projects.ts';
 import { projectDir } from '../../jobs/worker.ts';
-import { probeDurationMs } from '../../pipeline/segment.ts';
+import { measureEdges, probeDurationMs } from '../../pipeline/segment.ts';
 import { MAX_CHAPTERS, isConfigured, writeStory, StoryError } from '../../sources/deepseek.ts';
 import { html, layout, raw } from '../html.ts';
 import { requireAuth } from './auth.ts';
@@ -206,9 +213,16 @@ export async function storyRoutes(app: FastifyInstance): Promise<void> {
 
       await rm(raw_, { force: true });
       setTrackFile(projectId, index, final, await probeDurationMs(final));
+      const edges = await measureEdges(final);
+      setTrackEdges(projectId, index, edges.headDb, edges.tailDb);
 
       const done = listTracks(projectId).filter((entry) => entry.file_path).length;
-      return reply.send({ ok: true, recorded: done, src: `/projets/${projectId}/pistes/${index}/audio` });
+      return reply.send({
+        ok: true,
+        recorded: done,
+        clean: edges.clean,
+        src: `/projets/${projectId}/pistes/${index}/audio`,
+      });
     },
   );
 }

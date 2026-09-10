@@ -16,10 +16,13 @@ import type { FastifyInstance } from 'fastify';
 import { findByCardId, listPool, unenroll } from '../../db/cards.ts';
 import {
   addTrack,
+  clearProjectSource,
   createProject,
   deleteProject,
   getProject,
   listTracks,
+  setProjectSource,
+  setTrackEdges,
   setTrackIcon,
   type Project,
   type TrackRow,
@@ -27,7 +30,14 @@ import {
 import { enqueue, getJob, isTerminal, latestJobFor, requestCancel } from '../../jobs/queue.ts';
 import { projectDir } from '../../jobs/worker.ts';
 import { titleFromFilename } from '../../pipeline/publish.ts';
-import { AUDIO_EXTENSIONS } from '../../pipeline/upload.ts';
+import {
+  cutSegment,
+  EDGE_SILENCE_DB,
+  measureEdges,
+  proposeSegments,
+  type Segment,
+} from '../../pipeline/segment.ts';
+import { AUDIO_EXTENSIONS, MAX_TRACKS_PER_CARD } from '../../pipeline/upload.ts';
 import { probe } from '../../sources/youtube.ts';
 import { deleteCard, myIcons, publicIcons, searchIcons, uploadIcon } from '../../yoto/api.ts';
 import type { DisplayIcon } from '../../yoto/types.ts';
@@ -125,6 +135,13 @@ function newProjectPage(token: string, error?: string): string {
             <p class="muted">
               MP3, M4A, FLAC, WAV… Un fichier donne une piste, dans l'ordre alphabétique.
             </p>
+            <label class="check">
+              <input type="checkbox" name="autoSplit" value="1">
+              <span>
+                Un seul long enregistrement à découper automatiquement (détection de silences) —
+                pour un seul fichier déposé.
+              </span>
+            </label>
           </div>
         </div>
 
@@ -137,6 +154,51 @@ function newProjectPage(token: string, error?: string): string {
       <script src="/static/form.js"></script>
     `,
   );
+}
+
+function formatMs(ms: number): string {
+  const seconds = Math.round(ms / 1000);
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+}
+
+/** Faux si une extremite mesuree depasse -40 dB : la coupe est probablement tombee en plein mot. */
+const isEdgeClean = (track: TrackRow): boolean =>
+  (track.head_db === null || track.head_db <= EDGE_SILENCE_DB) &&
+  (track.tail_db === null || track.tail_db <= EDGE_SILENCE_DB);
+
+function reviewPanel(project: Project, segments: Segment[], totalMs: number): Html {
+  return html`
+    <section class="panel">
+      <h2>Découpage automatique</h2>
+      <p class="muted">
+        ${segments.length} piste(s) proposée(s) sur ${formatMs(totalMs)} au total. Ajuste le
+        nombre si le résultat ne convient pas, puis valide.
+      </p>
+      <form method="get" action="/projets/${project.id}" class="inline">
+        <label for="pistes">Nombre de pistes</label>
+        <input id="pistes" name="pistes" type="number" min="1" max="${MAX_TRACKS_PER_CARD}"
+               value="${segments.length}">
+        <button type="submit">Recalculer</button>
+      </form>
+      <table>
+        <thead><tr><th>#</th><th>Début</th><th>Fin</th><th>Durée</th></tr></thead>
+        <tbody>
+          ${segments.map(
+            (segment, index) => html`<tr>
+              <td>${index + 1}</td>
+              <td>${formatMs(segment.startMs)}</td>
+              <td>${formatMs(segment.endMs)}</td>
+              <td>${formatMs(segment.endMs - segment.startMs)}</td>
+            </tr>`,
+          )}
+        </tbody>
+      </table>
+      <form method="post" action="/projets/${project.id}/decoupage" data-guard>
+        <input type="hidden" name="segments" value='${JSON.stringify(segments)}'>
+        <button type="submit" data-busy-label="Découpage…">Valider ce découpage</button>
+      </form>
+    </section>
+  `;
 }
 
 function iconGrid(label: string, icons: DisplayIcon[], project: Project, track: TrackRow): Html {
@@ -284,6 +346,7 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
       const title = fields.get('title')?.trim() ?? '';
       const cardId = fields.get('cardId')?.trim() ?? '';
       const youtubeUrl = fields.get('youtubeUrl')?.trim() ?? '';
+      const autoSplit = fields.get('autoSplit') === '1';
 
       if (!title) {
         return reply.type('text/html').send(reissue(request, 'Le titre est obligatoire.'));
@@ -295,6 +358,11 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
       }
       if (youtubeUrl && !isYoutubeUrl(youtubeUrl)) {
         return reply.type('text/html').send(reissue(request, "Cette adresse n'est pas une URL YouTube."));
+      }
+      if (autoSplit && (youtubeUrl || staged.length !== 1)) {
+        return reply
+          .type('text/html')
+          .send(reissue(request, 'Le découpage automatique ne s’applique qu’à un seul fichier audio.'));
       }
 
       // Sonde avant de creer quoi que ce soit : une URL morte doit echouer tout de suite,
@@ -316,6 +384,18 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
         ...(cardId ? { cardId } : {}),
       });
 
+      // Le decoupage n'a encore aucune piste : on s'arrete a la revue, le worker n'a rien
+      // a faire tant que le decoupage n'est pas valide.
+      if (autoSplit) {
+        const directory = projectDir(projectId);
+        await mkdir(directory, { recursive: true });
+        const source = staged[0]!;
+        const final = join(directory, `source${extname(source.name)}`);
+        await rename(source.path, final);
+        setProjectSource(projectId, final);
+        return reply.redirect(`/projets/${projectId}`);
+      }
+
       if (staged.length > 0) {
         const directory = projectDir(projectId);
         await mkdir(directory, { recursive: true });
@@ -328,6 +408,8 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
             title: titleFromFilename(file.name),
             filePath: final,
           });
+          const edges = await measureEdges(final);
+          setTrackEdges(projectId, index, edges.headDb, edges.tailDb);
         }
       }
 
@@ -343,7 +425,9 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  app.get<{ Params: { id: string } }>('/projets/:id', async (request, reply) => {
+  app.get<{ Params: { id: string }; Querystring: { pistes?: string } }>(
+    '/projets/:id',
+    async (request, reply) => {
     const project = getProject(Number(request.params.id));
     if (!project) return reply.status(404).send('Projet introuvable.');
 
@@ -355,6 +439,23 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
     const missing = tracks.filter((track) => !track.file_path).length;
     // Republier n'a de sens que si le projet a des pistes et que rien ne tourne deja.
     const publishable = tracks.length > 0 && !running;
+
+    // Un decoupage en attente n'a encore aucune piste : la revue remplace le tableau habituel.
+    const reviewing = project.state === 'reviewing' && !!project.source_path;
+    let review: { segments: Segment[]; totalMs: number } | undefined;
+    let reviewError: string | undefined;
+    if (reviewing) {
+      const targetCount = Number(request.query.pistes ?? '');
+      try {
+        const proposal = await proposeSegments(
+          project.source_path!,
+          Number.isFinite(targetCount) && targetCount > 1 ? { targetCount } : {},
+        );
+        review = { segments: proposal.segments, totalMs: proposal.totalMs };
+      } catch (error) {
+        reviewError = error instanceof Error ? error.message : String(error);
+      }
+    }
 
     return reply.type('text/html').send(
       layout(
@@ -397,6 +498,16 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
                   </div>`
               : ''}
           </section>
+
+          ${reviewing
+            ? review
+              ? reviewPanel(project, review.segments, review.totalMs)
+              : html`<section class="panel">
+                  <p class="alert error">
+                    Impossible d'analyser l'enregistrement${reviewError ? ` : ${reviewError}` : ''}.
+                  </p>
+                </section>`
+            : ''}
 
           ${publishable
             ? html`
@@ -441,7 +552,15 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
                     ${tracks.map(
                       (track) => html`<tr>
                         <td>${track.idx + 1}</td>
-                        <td>${track.title}</td>
+                        <td>
+                          ${track.title}
+                          ${!isEdgeClean(track)
+                            ? html`<span class="chip warn"
+                                    title="Le début ou la fin de cette piste semble couper un mot.">
+                                    ⚠️ coupe
+                                  </span>`
+                            : ''}
+                        </td>
                         <td>
                           <a class="track-icon-link"
                              href="/projets/${project.id}/pistes/${track.idx}/icone">
@@ -552,6 +671,52 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
         const message = error instanceof Error ? error.message : String(error);
         return reply.type('text/html').send(iconPickerPage(project, track, [], [], '', message));
       }
+    },
+  );
+
+  app.post<{ Params: { id: string }; Body: { segments?: string } }>(
+    '/projets/:id/decoupage',
+    async (request, reply) => {
+      const projectId = Number(request.params.id);
+      const project = getProject(projectId);
+      if (!project?.source_path) return reply.redirect('/');
+
+      const isSegment = (value: unknown): value is Segment =>
+        typeof value === 'object' &&
+        value !== null &&
+        typeof (value as Segment).startMs === 'number' &&
+        typeof (value as Segment).endMs === 'number';
+
+      let segments: Segment[];
+      try {
+        const parsed: unknown = JSON.parse(request.body?.segments ?? '[]');
+        if (!Array.isArray(parsed) || parsed.length === 0 || !parsed.every(isSegment)) {
+          throw new Error('forme inattendue');
+        }
+        segments = parsed;
+      } catch {
+        return reply.redirect(`/projets/${projectId}`);
+      }
+
+      const directory = projectDir(projectId);
+      const ext = extname(project.source_path);
+
+      for (const [index, segment] of segments.entries()) {
+        const destination = join(directory, `${String(index + 1).padStart(2, '0')}${ext}`);
+        await cutSegment(project.source_path, segment, destination, {
+          title: `Piste ${index + 1}`,
+          trackNumber: index + 1,
+          trackTotal: segments.length,
+        });
+        addTrack({ projectId, idx: index, title: `Piste ${index + 1}`, filePath: destination });
+        const edges = await measureEdges(destination);
+        setTrackEdges(projectId, index, edges.headDb, edges.tailDb);
+      }
+
+      await rm(project.source_path, { force: true });
+      clearProjectSource(projectId);
+
+      return reply.redirect(`/projets/${projectId}`);
     },
   );
 

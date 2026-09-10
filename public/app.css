@@ -344,6 +344,7 @@ button.is-busy::before {
   background: var(--fill-ink); color: var(--neutral-100);
 }
 .chip.pale { background: var(--neutral-100); color: var(--neutral-800); }
+.chip.warn { background: var(--coral); color: var(--coral-ink); margin-left: 6px; }
 .story-when { font-size: 13px; opacity: .75; }
 
 .story-actions { display: flex; gap: var(--space-2); margin-top: auto; }
