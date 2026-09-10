@@ -102,9 +102,12 @@ Pour débloquer l'ingestion YouTube :
 
 1. Se connecter à un compte YouTube dans un navigateur, installer une extension du type
    *Get cookies.txt LOCALLY*, exporter les cookies du domaine `youtube.com`.
-2. Copier le fichier sur le serveur, à côté du `.env` :
+2. Copier le fichier sur le serveur, à côté du `.env`, et le donner à l'utilisateur du conteneur
+   (`yoto`, uid 10001 / gid 999 — sinon yt-dlp ne peut ni le lire ni le réécrire, et échoue en
+   silence comme s'il n'y avait pas de cookies) :
    ```sh
    scp cookies.txt root@<kvm>:/docker/yoto-studio/cookies.txt
+   ssh root@<kvm> 'chown 10001:999 /docker/yoto-studio/cookies.txt && chmod 600 /docker/yoto-studio/cookies.txt'
    ```
 3. Ajouter dans le `.env` :
    ```
