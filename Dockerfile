@@ -15,12 +15,19 @@ FROM node:22-bookworm-slim
 # ffmpeg découpe et transcode ; yt-dlp ingère les vidéos. Les paquets Debian de yt-dlp sont
 # systématiquement trop vieux — YouTube casse l'outil toutes les quelques semaines — donc on
 # prend le binaire officiel.
+#
+# YouTube chiffre ses URLs de flux avec un challenge JS (signature/n) que yt-dlp ne sait résoudre
+# qu'avec un runtime JS ; sans lui, l'extraction échoue avec "Requested format is not available"
+# même une fois le blocage anti-bot passé. Deno est le seul runtime activé par défaut.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ffmpeg python3 ca-certificates curl \
+ && apt-get install -y --no-install-recommends ffmpeg python3 ca-certificates curl unzip \
  && curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
       -o /usr/local/bin/yt-dlp \
  && chmod +x /usr/local/bin/yt-dlp \
- && apt-get purge -y curl && apt-get autoremove -y \
+ && DENO_ARCH=$(uname -m | sed -e 's/x86_64/x86_64-unknown-linux-gnu/' -e 's/aarch64/aarch64-unknown-linux-gnu/') \
+ && curl -fsSL "https://github.com/denoland/deno/releases/latest/download/deno-${DENO_ARCH}.zip" -o /tmp/deno.zip \
+ && unzip -q /tmp/deno.zip -d /usr/local/bin && rm /tmp/deno.zip && chmod +x /usr/local/bin/deno \
+ && apt-get purge -y curl unzip && apt-get autoremove -y \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
