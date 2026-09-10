@@ -141,6 +141,13 @@ export function listTracks(projectId: number): TrackRow[] {
     .all(projectId) as TrackRow[];
 }
 
+/** Associe (ou retire, si `mediaId` est nul) l'icone 16x16 d'une piste deja televersee chez Yoto. */
+export function setTrackIcon(projectId: number, idx: number, mediaId: string | null): void {
+  db()
+    .prepare(`UPDATE tracks SET icon_media_id = ? WHERE project_id = ? AND idx = ?`)
+    .run(mediaId, projectId, idx);
+}
+
 export function setTrackTranscode(
   projectId: number,
   idx: number,

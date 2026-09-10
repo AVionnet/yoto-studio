@@ -20,13 +20,17 @@ import {
   deleteProject,
   getProject,
   listTracks,
+  setTrackIcon,
+  type Project,
+  type TrackRow,
 } from '../../db/projects.ts';
 import { enqueue, getJob, isTerminal, latestJobFor, requestCancel } from '../../jobs/queue.ts';
 import { projectDir } from '../../jobs/worker.ts';
 import { titleFromFilename } from '../../pipeline/publish.ts';
 import { AUDIO_EXTENSIONS } from '../../pipeline/upload.ts';
 import { probe } from '../../sources/youtube.ts';
-import { deleteCard } from '../../yoto/api.ts';
+import { deleteCard, myIcons, publicIcons, searchIcons, uploadIcon } from '../../yoto/api.ts';
+import type { DisplayIcon } from '../../yoto/types.ts';
 import { html, layout, raw, type Html } from '../html.ts';
 import { requireAuth } from './auth.ts';
 
@@ -131,6 +135,87 @@ function newProjectPage(token: string, error?: string): string {
       </form>
       <script src="/static/tabs.js"></script>
       <script src="/static/form.js"></script>
+    `,
+  );
+}
+
+function iconGrid(label: string, icons: DisplayIcon[], project: Project, track: TrackRow): Html {
+  if (icons.length === 0) return html``;
+  return html`
+    <h3>${label}</h3>
+    <div class="icon-picker-grid">
+      ${icons.map(
+        (icon) => html`
+          <form method="post" action="/projets/${project.id}/pistes/${track.idx}/icone">
+            <input type="hidden" name="mediaId" value="${icon.mediaId}">
+            <button
+              type="submit"
+              class="icon-pick${icon.mediaId === track.icon_media_id ? ' is-selected' : ''}"
+              title="${icon.title ?? icon.mediaId}"
+            >
+              ${icon.url
+                ? html`<img src="${icon.url}" alt="${icon.title ?? ''}" width="40" height="40">`
+                : html`<span class="icon-pick-fallback">${(icon.title ?? '?').slice(0, 2)}</span>`}
+            </button>
+          </form>
+        `,
+      )}
+    </div>
+  `;
+}
+
+function iconPickerPage(
+  project: Project,
+  track: TrackRow,
+  mine: DisplayIcon[],
+  pub: DisplayIcon[],
+  q: string,
+  error?: string,
+): string {
+  return layout(
+    { title: `Icône — ${track.title}`, nav: 'projects' },
+    html`
+      <h1>Icône de « ${track.title} »</h1>
+      <p class="muted">
+        Le petit dessin affiché sur l'écran du lecteur pendant la lecture, et dans la liste des
+        chapitres.
+      </p>
+      ${error ? html`<p class="alert error">${error}</p>` : ''}
+
+      <section class="panel">
+        <form method="get" action="/projets/${project.id}/pistes/${track.idx}/icone" class="inline">
+          <input type="search" name="q" value="${q}" placeholder="Rechercher une icône…">
+          <button type="submit">Chercher</button>
+        </form>
+
+        ${track.icon_media_id
+          ? html`
+              <form method="post" action="/projets/${project.id}/pistes/${track.idx}/icone">
+                <input type="hidden" name="mediaId" value="">
+                <button class="link" type="submit">Retirer l'icône actuelle</button>
+              </form>
+            `
+          : ''}
+
+        ${iconGrid('Mes icônes', mine, project, track)}
+        ${iconGrid('Bibliothèque Yoto', pub, project, track)}
+        ${mine.length === 0 && pub.length === 0
+          ? html`<p class="muted">Aucune icône ne correspond${q ? html` à « ${q} »` : ''}.</p>`
+          : ''}
+      </section>
+
+      <section class="panel">
+        <h2>Importer une image</h2>
+        <p class="muted">PNG ou GIF, idéalement en 16×16 pixels.</p>
+        <form method="post" action="/projets/${project.id}/pistes/${track.idx}/icone/televerser"
+              enctype="multipart/form-data">
+          <label for="fichier">Fichier</label>
+          <input id="fichier" name="fichier" type="file" accept="image/png,image/gif" required>
+          <button type="submit">Téléverser et utiliser</button>
+        </form>
+      </section>
+
+      <p><a href="/projets/${project.id}">Retour au projet</a></p>
     `,
   );
 }
@@ -343,12 +428,17 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
                   <a class="button" href="/projets/${project.id}/ecouter">Écouter</a>
                 </p>
                 <table>
-                  <thead><tr><th>#</th><th>Titre</th><th>Transcodé</th></tr></thead>
+                  <thead><tr><th>#</th><th>Titre</th><th>Icône</th><th>Transcodé</th></tr></thead>
                   <tbody>
                     ${tracks.map(
                       (track) => html`<tr>
                         <td>${track.idx + 1}</td>
                         <td>${track.title}</td>
+                        <td>
+                          <a href="/projets/${project.id}/pistes/${track.idx}/icone">
+                            ${track.icon_media_id ? 'Changer' : 'Choisir'}
+                          </a>
+                        </td>
                         <td>${track.transcoded_sha256 ? '✓' : '—'}</td>
                       </tr>`,
                     )}
@@ -389,6 +479,68 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
       ),
     );
   });
+
+  app.get<{ Params: { id: string; idx: string }; Querystring: { q?: string } }>(
+    '/projets/:id/pistes/:idx/icone',
+    async (request, reply) => {
+      const project = getProject(Number(request.params.id));
+      if (!project) return reply.status(404).send('Projet introuvable.');
+      const idx = Number(request.params.idx);
+      const track = listTracks(project.id).find((row) => row.idx === idx);
+      if (!track) return reply.status(404).send('Piste introuvable.');
+
+      const q = request.query.q?.trim() ?? '';
+      try {
+        const [mine, pub] = await Promise.all([myIcons(), publicIcons()]);
+        return reply
+          .type('text/html')
+          .send(iconPickerPage(project, track, searchIcons(mine, q), searchIcons(pub, q), q));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return reply.type('text/html').send(iconPickerPage(project, track, [], [], q, message));
+      }
+    },
+  );
+
+  app.post<{ Params: { id: string; idx: string }; Body: { mediaId?: string } }>(
+    '/projets/:id/pistes/:idx/icone',
+    async (request, reply) => {
+      const projectId = Number(request.params.id);
+      const idx = Number(request.params.idx);
+      const mediaId = request.body?.mediaId?.trim() ?? '';
+      setTrackIcon(projectId, idx, mediaId || null);
+      return reply.redirect(`/projets/${projectId}`);
+    },
+  );
+
+  app.post<{ Params: { id: string; idx: string } }>(
+    '/projets/:id/pistes/:idx/icone/televerser',
+    async (request, reply) => {
+      const projectId = Number(request.params.id);
+      const idx = Number(request.params.idx);
+      const project = getProject(projectId);
+      if (!project) return reply.status(404).send('Projet introuvable.');
+      const track = listTracks(projectId).find((row) => row.idx === idx);
+      if (!track) return reply.status(404).send('Piste introuvable.');
+
+      const file = await request.file();
+      if (!file) {
+        return reply
+          .type('text/html')
+          .send(iconPickerPage(project, track, [], [], '', 'Choisis un fichier.'));
+      }
+
+      try {
+        const bytes = await file.toBuffer();
+        const icon = await uploadIcon(bytes, file.filename);
+        setTrackIcon(projectId, idx, icon.mediaId);
+        return reply.redirect(`/projets/${projectId}`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return reply.type('text/html').send(iconPickerPage(project, track, [], [], '', message));
+      }
+    },
+  );
 
   app.post<{ Params: { id: string }; Body: { cardId?: string } }>(
     '/projets/:id/publier',
