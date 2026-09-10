@@ -39,6 +39,8 @@ export interface TrackRow {
   tail_db: number | null;
   transcoded_sha256: string | null;
   icon_media_id: string | null;
+  /** Apercu seulement, jamais envoye a Yoto : la carte publiee ne connait que icon_media_id. */
+  icon_url: string | null;
 }
 
 export function createProject(fields: {
@@ -72,6 +74,8 @@ export interface ProjectSummary extends Project {
   track_count: number;
   /** Somme des durees connues, en millisecondes. Nulle tant que rien n'est transcode. */
   total_ms: number;
+  /** Icone de la premiere piste, pour la vignette d'accueil. Nulle sans icone choisie. */
+  icon_url: string | null;
 }
 
 /** Les projets avec de quoi remplir une vignette, en une seule requete. */
@@ -80,7 +84,8 @@ export function listProjectSummaries(): ProjectSummary[] {
     .prepare(
       `SELECT p.*,
               count(t.id) AS track_count,
-              coalesce(sum(t.duration_ms), 0) AS total_ms
+              coalesce(sum(t.duration_ms), 0) AS total_ms,
+              (SELECT icon_url FROM tracks WHERE project_id = p.id AND idx = 0) AS icon_url
        FROM projects p
        LEFT JOIN tracks t ON t.project_id = p.id
        GROUP BY p.id
@@ -141,11 +146,20 @@ export function listTracks(projectId: number): TrackRow[] {
     .all(projectId) as TrackRow[];
 }
 
-/** Associe (ou retire, si `mediaId` est nul) l'icone 16x16 d'une piste deja televersee chez Yoto. */
-export function setTrackIcon(projectId: number, idx: number, mediaId: string | null): void {
+/**
+ * Associe (ou retire, si `mediaId` est nul) l'icone 16x16 d'une piste deja televersee chez Yoto.
+ * `url` n'est qu'un apercu pour l'interface : absent, l'icone reste sans vignette mais fonctionne
+ * quand meme a la publication.
+ */
+export function setTrackIcon(
+  projectId: number,
+  idx: number,
+  mediaId: string | null,
+  url: string | null = null,
+): void {
   db()
-    .prepare(`UPDATE tracks SET icon_media_id = ? WHERE project_id = ? AND idx = ?`)
-    .run(mediaId, projectId, idx);
+    .prepare(`UPDATE tracks SET icon_media_id = ?, icon_url = ? WHERE project_id = ? AND idx = ?`)
+    .run(mediaId, mediaId ? url : null, projectId, idx);
 }
 
 export function setTrackTranscode(

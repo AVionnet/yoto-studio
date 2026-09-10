@@ -148,6 +148,7 @@ function iconGrid(label: string, icons: DisplayIcon[], project: Project, track: 
         (icon) => html`
           <form method="post" action="/projets/${project.id}/pistes/${track.idx}/icone">
             <input type="hidden" name="mediaId" value="${icon.mediaId}">
+            <input type="hidden" name="url" value="${icon.url ?? ''}">
             <button
               type="submit"
               class="icon-pick${icon.mediaId === track.icon_media_id ? ' is-selected' : ''}"
@@ -190,10 +191,17 @@ function iconPickerPage(
 
         ${track.icon_media_id
           ? html`
-              <form method="post" action="/projets/${project.id}/pistes/${track.idx}/icone">
-                <input type="hidden" name="mediaId" value="">
-                <button class="link" type="submit">Retirer l'icône actuelle</button>
-              </form>
+              <div class="icon-current">
+                <div class="icon-pick is-selected" aria-hidden="true">
+                  ${track.icon_url
+                    ? html`<img src="${track.icon_url}" alt="" width="40" height="40">`
+                    : html`<span class="icon-pick-fallback">?</span>`}
+                </div>
+                <form method="post" action="/projets/${project.id}/pistes/${track.idx}/icone">
+                  <input type="hidden" name="mediaId" value="">
+                  <button class="link" type="submit">Retirer l'icône actuelle</button>
+                </form>
+              </div>
             `
           : ''}
 
@@ -435,7 +443,11 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
                         <td>${track.idx + 1}</td>
                         <td>${track.title}</td>
                         <td>
-                          <a href="/projets/${project.id}/pistes/${track.idx}/icone">
+                          <a class="track-icon-link"
+                             href="/projets/${project.id}/pistes/${track.idx}/icone">
+                            ${track.icon_url
+                              ? html`<img src="${track.icon_url}" alt="" width="24" height="24">`
+                              : ''}
                             ${track.icon_media_id ? 'Changer' : 'Choisir'}
                           </a>
                         </td>
@@ -502,13 +514,14 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
     },
   );
 
-  app.post<{ Params: { id: string; idx: string }; Body: { mediaId?: string } }>(
+  app.post<{ Params: { id: string; idx: string }; Body: { mediaId?: string; url?: string } }>(
     '/projets/:id/pistes/:idx/icone',
     async (request, reply) => {
       const projectId = Number(request.params.id);
       const idx = Number(request.params.idx);
       const mediaId = request.body?.mediaId?.trim() ?? '';
-      setTrackIcon(projectId, idx, mediaId || null);
+      const url = request.body?.url?.trim() ?? '';
+      setTrackIcon(projectId, idx, mediaId || null, url || null);
       return reply.redirect(`/projets/${projectId}`);
     },
   );
@@ -533,7 +546,7 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
       try {
         const bytes = await file.toBuffer();
         const icon = await uploadIcon(bytes, file.filename);
-        setTrackIcon(projectId, idx, icon.mediaId);
+        setTrackIcon(projectId, idx, icon.mediaId, icon.url ?? null);
         return reply.redirect(`/projets/${projectId}`);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

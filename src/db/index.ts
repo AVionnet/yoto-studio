@@ -43,6 +43,10 @@ function migrate(handle: Database.Database): void {
     handle.exec('ALTER TABLE tracks ADD COLUMN text TEXT');
   }
 
+  if (!columns('tracks').has('icon_url')) {
+    handle.exec('ALTER TABLE tracks ADD COLUMN icon_url TEXT');
+  }
+
   // SQLite ne sait pas modifier une contrainte CHECK : il faut reconstruire la table.
   const ddl = handle
     .prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'projects'`)

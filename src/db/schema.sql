@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS tracks (
   tail_db           REAL,
   transcoded_sha256 TEXT,                       -- donne trackUrl = "yoto:#" || ce sha
   icon_media_id     TEXT,                       -- donne display.icon16x16 = "yoto:#" || ce media
+  icon_url          TEXT,                       -- apercu seulement, jamais envoye a Yoto
   UNIQUE (project_id, idx)
 );
 
