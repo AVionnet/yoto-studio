@@ -66,9 +66,11 @@ function storyCard(project: ProjectSummary, index: number) {
     <article class="story-card" style="--fill:${fill};--fill-ink:${ink}">
       <div class="story-head">
         <div class="icon-tile" aria-hidden="true">
-          ${project.icon_url
-            ? html`<img src="${project.icon_url}" alt="">`
-            : raw(tile(project.id))}
+          ${project.cover_url
+            ? html`<img class="photo" src="${project.cover_url}" alt="">`
+            : project.icon_url
+              ? html`<img src="${project.icon_url}" alt="">`
+              : raw(tile(project.id))}
         </div>
         <div>
           <a class="story-title" href="/projets/${project.id}">${project.title}</a>

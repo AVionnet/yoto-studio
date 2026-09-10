@@ -112,6 +112,7 @@ async function runBuild(job: Job): Promise<unknown> {
 
   const input = {
     title: payload.title,
+    coverUrl: getProject(payload.projectId)?.cover_url ?? undefined,
     tracks: uploaded.map((entry, index) => ({
       ...entry,
       title: rows[index]!.title,

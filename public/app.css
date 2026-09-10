@@ -311,6 +311,8 @@ button.is-busy::before {
   grid-column: 1 / -1; grid-row: 1 / -1;
   width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated;
 }
+/* Une couverture est une vraie photo, pas un pixel-art : pas de rendu en blocs. */
+.icon-tile img.photo { object-fit: cover; border-radius: var(--radius-md); image-rendering: auto; }
 
 /* Grille de choix d'icone de piste : fond sombre par tuile, comme l'ecran du lecteur. */
 .icon-picker-grid {
@@ -328,6 +330,10 @@ button.is-busy::before {
 .icon-pick.is-selected { border-color: var(--coral-ink); }
 .icon-pick img { width: 40px; height: 40px; image-rendering: pixelated; }
 .icon-pick-fallback { color: var(--neutral-100); font-size: 12px; font-weight: 700; }
+
+/* En-tete de projet : couverture eventuelle a cote du titre. */
+.project-head { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4); }
+.project-head h1 { margin: 0; }
 
 /* Aperçu de l'icone actuelle, au-dessus de la grille de choix. */
 .icon-current { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4); }

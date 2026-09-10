@@ -18,6 +18,7 @@ export interface Project {
   source_ref: string | null;
   source_path: string | null;
   card_id: string | null;
+  cover_url: string | null;
   artwork_json: string | null;
   error: string | null;
   created_at: string;
@@ -103,6 +104,13 @@ export function setProjectCard(id: number, cardId: string): void {
   db()
     .prepare(`UPDATE projects SET card_id = ?, updated_at = datetime('now') WHERE id = ?`)
     .run(cardId, id);
+}
+
+/** Image de couverture, affichee dans la bibliotheque de l'app Yoto. */
+export function setProjectCover(id: number, url: string | null): void {
+  db()
+    .prepare(`UPDATE projects SET cover_url = ?, updated_at = datetime('now') WHERE id = ?`)
+    .run(url, id);
 }
 
 /** Depose un long enregistrement en attente de decoupage : bascule le projet en revue. */

@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS projects (
   source_ref   TEXT,                            -- URL, GUID d'episode, nom de fichier
   source_path  TEXT,                            -- fichier long telecharge, purge apres publication
   card_id      TEXT REFERENCES cards(card_id) ON DELETE SET NULL,
+  cover_url    TEXT,                            -- donne metadata.cover.imageL
   artwork_json TEXT,                            -- theme, sous-titre, choix de mise en page
   error        TEXT,
   created_at   TEXT NOT NULL DEFAULT (datetime('now')),

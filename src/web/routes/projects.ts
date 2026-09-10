@@ -21,6 +21,7 @@ import {
   deleteProject,
   getProject,
   listTracks,
+  setProjectCover,
   setProjectSource,
   setTrackEdges,
   setTrackIcon,
@@ -39,7 +40,14 @@ import {
 } from '../../pipeline/segment.ts';
 import { AUDIO_EXTENSIONS, MAX_TRACKS_PER_CARD } from '../../pipeline/upload.ts';
 import { probe } from '../../sources/youtube.ts';
-import { deleteCard, myIcons, publicIcons, searchIcons, uploadIcon } from '../../yoto/api.ts';
+import {
+  deleteCard,
+  myIcons,
+  publicIcons,
+  searchIcons,
+  uploadCover,
+  uploadIcon,
+} from '../../yoto/api.ts';
 import type { DisplayIcon } from '../../yoto/types.ts';
 import { html, layout, raw, type Html } from '../html.ts';
 import { requireAuth } from './auth.ts';
@@ -290,6 +298,41 @@ function iconPickerPage(
   );
 }
 
+function coverPickerPage(project: Project, error?: string): string {
+  return layout(
+    { title: `Couverture — ${project.title}`, nav: 'projects' },
+    html`
+      <h1>Couverture de « ${project.title} »</h1>
+      <p class="muted">L'image affichée dans la bibliothèque de l'app Yoto.</p>
+      ${error ? html`<p class="alert error">${error}</p>` : ''}
+
+      <section class="panel">
+        ${project.cover_url
+          ? html`
+              <div class="icon-current">
+                <div class="icon-tile" aria-hidden="true">
+                  <img class="photo" src="${project.cover_url}" alt="">
+                </div>
+                <form method="post" action="/projets/${project.id}/couverture/retirer">
+                  <button class="link" type="submit">Retirer la couverture</button>
+                </form>
+              </div>
+            `
+          : ''}
+
+        <form method="post" action="/projets/${project.id}/couverture"
+              enctype="multipart/form-data">
+          <label for="fichier">Image (JPG ou PNG, carrée de préférence)</label>
+          <input id="fichier" name="fichier" type="file" accept="image/jpeg,image/png" required>
+          <button type="submit">Téléverser et utiliser</button>
+        </form>
+      </section>
+
+      <p><a href="/projets/${project.id}">Retour au projet</a></p>
+    `,
+  );
+}
+
 /** Réaffiche le formulaire avec un jeton neuf : sans ça, corriger une erreur serait bloqué. */
 function reissue(request: { session: { formToken?: string } }, error: string): string {
   const token = randomUUID();
@@ -461,7 +504,19 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
       layout(
         { title: project.title, nav: 'projects' },
         html`
-          <h1>${project.title}</h1>
+          <div class="project-head">
+            ${project.cover_url
+              ? html`<div class="icon-tile" aria-hidden="true">
+                  <img class="photo" src="${project.cover_url}" alt="">
+                </div>`
+              : ''}
+            <div>
+              <h1>${project.title}</h1>
+              <a href="/projets/${project.id}/couverture">
+                ${project.cover_url ? 'Changer la couverture' : 'Choisir une couverture'}
+              </a>
+            </div>
+          </div>
 
           <section class="panel">
             <div id="etat" data-project="${project.id}" data-running="${running ? '1' : '0'}">
@@ -673,6 +728,39 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
       }
     },
   );
+
+  app.get<{ Params: { id: string } }>('/projets/:id/couverture', async (request, reply) => {
+    const project = getProject(Number(request.params.id));
+    if (!project) return reply.status(404).send('Projet introuvable.');
+    return reply.type('text/html').send(coverPickerPage(project));
+  });
+
+  app.post<{ Params: { id: string } }>('/projets/:id/couverture', async (request, reply) => {
+    const projectId = Number(request.params.id);
+    const project = getProject(projectId);
+    if (!project) return reply.status(404).send('Projet introuvable.');
+
+    const file = await request.file();
+    if (!file) {
+      return reply.type('text/html').send(coverPickerPage(project, 'Choisis un fichier.'));
+    }
+
+    try {
+      const bytes = await file.toBuffer();
+      const cover = await uploadCover(bytes, file.mimetype);
+      setProjectCover(projectId, cover.mediaUrl);
+      return reply.redirect(`/projets/${projectId}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return reply.type('text/html').send(coverPickerPage(project, message));
+    }
+  });
+
+  app.post<{ Params: { id: string } }>('/projets/:id/couverture/retirer', async (request, reply) => {
+    const projectId = Number(request.params.id);
+    setProjectCover(projectId, null);
+    return reply.redirect(`/projets/${projectId}`);
+  });
 
   app.post<{ Params: { id: string }; Body: { segments?: string } }>(
     '/projets/:id/decoupage',
