@@ -86,3 +86,34 @@ Depuis une IP de datacenter, YouTube applique son traitement le plus strict et a
 remédie durablement. Fournir un `cookies.txt` d'un compte connecté via `YTDLP_COOKIES_FILE`
 repousse l'échéance ; le dépôt de fichiers et l'enregistrement au micro, eux, ne dépendent de
 personne.
+
+### Fournir le cookies.txt
+
+Le `docker-compose.yml` monte `./cookies.txt` (à côté du `.env`) sur `/data/cookies.txt` dans le
+conteneur. Ce fichier doit exister **avant** `docker compose up`, même vide, sinon Docker crée un
+dossier à sa place.
+
+```sh
+# à côté du .env, tant qu'on n'a pas de vrais cookies
+touch /docker/yoto-studio/cookies.txt
+```
+
+Pour débloquer l'ingestion YouTube :
+
+1. Se connecter à un compte YouTube dans un navigateur, installer une extension du type
+   *Get cookies.txt LOCALLY*, exporter les cookies du domaine `youtube.com`.
+2. Copier le fichier sur le serveur, à côté du `.env` :
+   ```sh
+   scp cookies.txt root@<kvm>:/docker/yoto-studio/cookies.txt
+   ```
+3. Ajouter dans le `.env` :
+   ```
+   YTDLP_COOKIES_FILE=/data/cookies.txt
+   ```
+4. Redémarrer :
+   ```sh
+   docker compose up -d
+   ```
+
+Le compte utilisé se fera éventuellement bloquer par YouTube au bout d'un moment ; il faudra alors
+recommencer l'export.

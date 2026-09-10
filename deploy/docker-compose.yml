@@ -20,6 +20,7 @@ services:
     volumes:
       - data:/data
       - media:/media
+      - ./cookies.txt:/data/cookies.txt:ro
     labels:
       - traefik.enable=true
       - traefik.http.routers.${COMPOSE_PROJECT_NAME}.rule=Host(`${TRAEFIK_HOST}`)
