@@ -10,11 +10,24 @@ CREATE TABLE IF NOT EXISTS cards (
   id                 INTEGER PRIMARY KEY,
   card_id            TEXT NOT NULL UNIQUE,      -- identifiant Yoto, 5 caracteres
   nickname           TEXT NOT NULL,             -- « la bleue », « celle du dinosaure »
-  ndef_url           TEXT,                      -- relevee par Web NFC, jamais reecrite
+  ndef_url           TEXT,                      -- relevee par Web NFC ; sert a encoder une vierge
   track_count        INTEGER NOT NULL DEFAULT 0,-- pour verifier la limite de 100
   current_project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
   enrolled_at        TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Les puces vierges encodees : un tag physique porteur de l'URL d'un contenu.
+-- La cle est l'uid de la puce, parce qu'une puce ne porte qu'un enregistrement NDEF a la fois :
+-- la reencoder remplace la ligne. Plusieurs puces peuvent porter le meme card_id — ce sont
+-- alors des jumelles, qui jouent la meme chose.
+-- Pas de cle etrangere vers cards : retirer une carte du pool ne doit pas effacer la trace
+-- des cartes physiques qui existent dans le monde.
+CREATE TABLE IF NOT EXISTS card_tags (
+  id         INTEGER PRIMARY KEY,
+  uid        TEXT UNIQUE,               -- serial de la puce, quand le telephone l'expose
+  card_id    TEXT NOT NULL,
+  written_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 -- Un projet = une fabrication, de la source jusqu'a la publication.

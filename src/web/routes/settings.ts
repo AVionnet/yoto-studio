@@ -7,7 +7,7 @@
 import type { FastifyInstance } from 'fastify';
 
 import { hasOfflineAccess } from '../../config.ts';
-import { listPool, setTrackCount } from '../../db/cards.ts';
+import { listPool, setTrackCount, tagCounts } from '../../db/cards.ts';
 import { getCard, listMyCards } from '../../yoto/api.ts';
 import { AuthRequiredError } from '../../yoto/errors.ts';
 import { isConnected } from '../../yoto/oauth.ts';
@@ -110,12 +110,20 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
 
     const enrolled = new Set(pool.map((card) => card.card_id));
 
+    const encoded = tagCounts();
+
     const poolRows = listPool().map((card) => {
       const source = remote.find((entry) => entry.cardId === card.card_id);
       const used = details.get(card.card_id) ?? card.track_count;
+      const copies = encoded.get(card.card_id) ?? 0;
       return html`
         <tr>
-          <td><strong>${card.nickname}</strong></td>
+          <td>
+            <strong>${card.nickname}</strong>
+            ${copies > 0
+              ? html`<br><span class="muted">${copies} carte(s) encodée(s)</span>`
+              : ''}
+          </td>
           <td><code>${card.card_id}</code></td>
           <td>${source ? source.title : raw('<span class="muted">introuvable chez Yoto</span>')}</td>
           <td class="${used >= MAX_TRACKS ? 'alert-text' : ''}">${used} / ${MAX_TRACKS}</td>
@@ -190,8 +198,14 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
           <section class="panel">
             <h2>Outils</h2>
             <p>
+              <a href="/cartes/encoder">Encoder une carte vierge</a> — recopier l'adresse d'un
+              contenu sur une puce NFC Ultralight EV1 de 48 octets, celles vendues par lots.
+            </p>
+            <p>
               <a href="/static/spike-nfc.html">Sonde NFC</a> — lire ce que porte une carte.
-              Nécessite Chrome sur Android, en HTTPS.
+            </p>
+            <p class="muted">
+              Les deux demandent Web NFC : Chrome sur Android, en HTTPS.
             </p>
           </section>
         `,

@@ -547,6 +547,30 @@ main.centered .brand-badge {
 main.centered .panel label { text-align: left; }
 main.centered .panel button { width: 100%; }
 
+/* ── Encodage NFC ──────────────────────────────────────────────────────── */
+
+/* Relevé d'une carte : des paires courtes, valeurs en chasse fixe parce qu'on les recopie. */
+.kv { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: var(--space-2) var(--space-4); }
+.kv dt { color: var(--neutral-700); font-size: 13px; white-space: nowrap; }
+.kv dd {
+  margin: 0; word-break: break-all;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13.5px;
+}
+
+/* Réserve sa ligne : le message apparaît et disparaît sans faire sauter la page. */
+.status { min-height: 22px; margin: var(--space-3) 0 0; font-size: 14px; color: var(--neutral-700); }
+.pulse { animation: nfc-pulse 1.4s ease-in-out infinite; }
+@keyframes nfc-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+
+/* Le jeton d'une carte est un secret : il ne s'affiche qu'au toucher. */
+.masked { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+
+pre {
+  margin: 0 0 var(--space-4); padding: var(--space-3) var(--space-4);
+  background: var(--surface); border-radius: var(--radius-md); overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px;
+}
+
 /* ── Page de présentation ──────────────────────────────────────────────── */
 
 .landing { max-width: 1100px; margin: 0 auto; padding: clamp(24px, 4vw, 56px) clamp(16px, 4vw, 52px); }

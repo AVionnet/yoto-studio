@@ -542,14 +542,23 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
                     <p><strong>Contenu créé</strong> sous l'identifiant <code>${project.card_id}</code>.</p>
                     <p>
                       Dernière étape manuelle, une seule fois dans la vie de cette carte : ouvre
-                      ce contenu chez Yoto, choisis « Link to a card » et approche une carte MYO
-                      vierge. Ensuite, republier dessus ne demandera plus rien.
+                      ce contenu chez Yoto, choisis « Link to a card » et approche une carte MYO.
+                      Ensuite, republier dessus ne demandera plus rien.
+                    </p>
+                    <p>
+                      Pour qu'une <strong>carte vierge</strong> du commerce porte cette histoire :
+                      lie le contenu à ta carte MYO « passeur » comme ci-dessus, puis
+                      <a href="/cartes/encoder?projet=${project.id}">encode la vierge</a>. Le
+                      passeur redevient libre pour l'histoire suivante.
                     </p>
                     <p style="margin:0">${yotoLink(project.card_id)}</p>
                   </div>`
                 : html`<div class="alert ok" style="display:block">
                     <p>Carte <code>${project.card_id}</code> mise à jour. Insère-la dans le lecteur.</p>
-                    <p style="margin:0">${yotoLink(project.card_id)}</p>
+                    <p style="margin:0">
+                      ${yotoLink(project.card_id)} ·
+                      <a href="/cartes/encoder?projet=${project.id}">Encoder une carte vierge</a>
+                    </p>
                   </div>`
               : ''}
           </section>

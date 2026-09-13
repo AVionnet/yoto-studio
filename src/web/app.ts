@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { config } from '../config.ts';
 import { authRoutes } from './routes/auth.ts';
 import { cardRoutes } from './routes/cards.ts';
+import { encodeRoutes } from './routes/encode.ts';
 import { homeRoutes } from './routes/home.ts';
 import { playerRoutes } from './routes/player.ts';
 import { projectRoutes } from './routes/projects.ts';
@@ -59,6 +60,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(authRoutes);
   await app.register(homeRoutes);
   await app.register(cardRoutes);
+  await app.register(encodeRoutes);
   await app.register(projectRoutes);
   await app.register(playerRoutes);
   await app.register(settingsRoutes);

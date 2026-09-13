@@ -11,6 +11,14 @@ export interface PoolCard {
   enrolled_at: string;
 }
 
+/** Une puce vierge encodee. Plusieurs peuvent partager un `card_id` : ce sont des jumelles. */
+export interface CardTag {
+  id: number;
+  uid: string | null;
+  card_id: string;
+  written_at: string;
+}
+
 export function listPool(): PoolCard[] {
   return db().prepare('SELECT * FROM cards ORDER BY nickname COLLATE NOCASE').all() as PoolCard[];
 }
@@ -35,6 +43,49 @@ export function enroll(cardId: string, nickname: string, ndefUrl?: string): void
 
 export function unenroll(cardId: string): void {
   db().prepare('DELETE FROM cards WHERE card_id = ?').run(cardId);
+}
+
+/**
+ * Enregistre l'URL relevee sur une carte physique. C'est la seule facon d'obtenir un couple
+ * cardId + token valide : il est frappe par le serveur Yoto, et ne se fabrique pas ici.
+ */
+export function setNdefUrl(cardId: string, ndefUrl: string): void {
+  db()
+    .prepare(`UPDATE cards SET ndef_url = ?, updated_at = datetime('now') WHERE card_id = ?`)
+    .run(ndefUrl, cardId);
+}
+
+/**
+ * Note une puce vierge qui vient d'etre encodee. La cle est l'uid : une puce ne porte qu'un
+ * enregistrement NDEF, donc la reencoder deplace simplement son contenu.
+ */
+export function recordTag(cardId: string, uid: string | undefined): void {
+  if (uid) {
+    db()
+      .prepare(
+        `INSERT INTO card_tags (uid, card_id) VALUES (?, ?)
+         ON CONFLICT (uid) DO UPDATE
+           SET card_id = excluded.card_id, written_at = datetime('now')`,
+      )
+      .run(uid, cardId);
+    return;
+  }
+  // Sans uid on ne peut pas reconnaitre la puce : on garde quand meme la trace de l'encodage.
+  db().prepare('INSERT INTO card_tags (card_id) VALUES (?)').run(cardId);
+}
+
+export function tagsFor(cardId: string): CardTag[] {
+  return db()
+    .prepare('SELECT * FROM card_tags WHERE card_id = ? ORDER BY written_at DESC')
+    .all(cardId) as CardTag[];
+}
+
+/** Combien de cartes physiques portent chaque contenu, pour l'afficher dans le pool. */
+export function tagCounts(): Map<string, number> {
+  const rows = db()
+    .prepare('SELECT card_id, count(*) AS n FROM card_tags GROUP BY card_id')
+    .all() as { card_id: string; n: number }[];
+  return new Map(rows.map((row) => [row.card_id, row.n]));
 }
 
 export function setTrackCount(cardId: string, count: number): void {
