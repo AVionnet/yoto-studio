@@ -631,3 +631,28 @@ pre {
 
 /* La page publique n'a pas d'en-tête : elle se cale en haut, pas au centre. */
 main.centered:has(.landing) { min-height: 0; align-items: start; }
+
+/* ── Étiquettes Cricut ─────────────────────────────────────────────────── */
+
+/* Le damier dit ce que la machine va faire : ce qui n'est pas damier sera découpé.
+   Sans lui, l'aperçu d'un PNG transparent sur fond crème ressemble à un rectangle plein. */
+.label-preview {
+  margin: 0 0 var(--space-4); padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background-color: var(--neutral-200);
+  background-image:
+    linear-gradient(45deg, var(--neutral-300) 25%, transparent 25%, transparent 75%,
+                    var(--neutral-300) 75%),
+    linear-gradient(45deg, var(--neutral-300) 25%, transparent 25%, transparent 75%,
+                    var(--neutral-300) 75%);
+  background-size: 20px 20px;
+  background-position: 0 0, 10px 10px;
+}
+.label-preview img {
+  display: block; margin: 0 auto; width: 100%; max-width: 430px; height: auto;
+  filter: drop-shadow(var(--shadow-md));
+}
+
+/* Rangée de boutons dans un panneau. hero-actions ne convient pas : son margin-left
+   automatique la colle à droite, ce qui n'a de sens que dans l'en-tête d'une section. */
+.picker { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0 0 var(--space-3); }

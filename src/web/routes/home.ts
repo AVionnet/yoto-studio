@@ -177,14 +177,18 @@ export async function homeRoutes(app: FastifyInstance): Promise<void> {
           <section class="hero">
             <h1>Vos cartes</h1>
             <p>Une histoire, une image, et la carte est prête à être posée sur le lecteur.</p>
-            ${connected
-              ? html`
-                  <span class="hero-actions">
+            <span class="hero-actions">
+              ${connected
+                ? html`
                     <a class="button" href="/histoire/nouvelle">Écrire une histoire</a>
                     <a class="button ghost" href="/projets/nouveau">Depuis un fichier</a>
-                  </span>
-                `
-              : html`<a class="button" href="/auth/yoto/start">Connecter Yoto</a>`}
+                  `
+                : html`<a class="button" href="/auth/yoto/start">Connecter Yoto</a>`}
+              <!-- Découper des étiquettes ne demande rien à Yoto : le lien reste même déconnecté. -->
+              ${projects.some((project) => project.cover_url)
+                ? html`<a class="button ghost" href="/cartes/etiquettes">Étiquettes à découper</a>`
+                : ''}
+            </span>
           </section>
 
           <div class="card-grid">

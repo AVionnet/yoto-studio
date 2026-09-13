@@ -16,9 +16,12 @@ import {
   listTracks,
   setProjectCard,
   setProjectState,
+  setTrackIcon,
   setTrackTranscode,
 } from '../db/projects.ts';
 import { publishAsNew, publishToCard } from '../pipeline/publish.ts';
+import { drawIcon } from '../sources/artwork.ts';
+import { uploadIcon } from '../yoto/api.ts';
 import { titleFromFilename } from '../pipeline/publish.ts';
 import { CancelledError, uploadAndTranscode } from '../pipeline/upload.ts';
 import { downloadAudio } from '../sources/youtube.ts';
@@ -138,8 +141,59 @@ async function runBuild(job: Job): Promise<unknown> {
   return { cardId: card.cardId, title: card.title, trackCount: uploaded.length, isNew };
 }
 
+export interface ArtworkPayload {
+  projectId: number;
+  /** Redessiner aussi les pistes qui ont deja une icone. */
+  all?: boolean;
+}
+
+/**
+ * Une icone par piste, dessinee puis televersee chez Yoto.
+ *
+ * Un echec isole ne fait pas tomber le lot : sur dix chapitres, le modele en rate parfois un,
+ * et perdre les neuf autres pour autant serait absurde. Le compte des rates est rendu a la fin.
+ */
+async function runArtwork(job: Job): Promise<unknown> {
+  const payload = JSON.parse(job.payload_json) as ArtworkPayload;
+
+  const tracks = listTracks(payload.projectId).filter(
+    (track) => payload.all || !track.icon_media_id,
+  );
+  if (tracks.length === 0) throw new Error('Toutes les pistes ont déjà une icône.');
+
+  let drawn = 0;
+  let failed = 0;
+
+  for (const [index, track] of tracks.entries()) {
+    if (isCancelling(job.id)) throw new CancelledError();
+    reportProgress(job.id, `Dessin de « ${track.title} »…`, index, tracks.length);
+
+    try {
+      const icon = await drawIcon(track.title);
+      const uploaded = await uploadIcon(icon, `piste-${track.idx + 1}.png`);
+      setTrackIcon(payload.projectId, track.idx, uploaded.mediaId, uploaded.url ?? null);
+      drawn += 1;
+    } catch {
+      failed += 1;
+    }
+  }
+
+  reportProgress(
+    job.id,
+    failed === 0
+      ? `${drawn} icône(s) dessinée(s).`
+      : `${drawn} icône(s) dessinée(s), ${failed} en échec.`,
+    tracks.length,
+    tracks.length,
+  );
+  if (drawn === 0) throw new Error("Aucune icône n'a pu être dessinée.");
+
+  return { drawn, failed };
+}
+
 const HANDLERS: Record<string, (job: Job) => Promise<unknown>> = {
   build: runBuild,
+  artwork: runArtwork,
 };
 
 async function runOne(job: Job): Promise<void> {
@@ -154,12 +208,14 @@ async function runOne(job: Job): Promise<void> {
   } catch (error) {
     if (error instanceof CancelledError) {
       markCancelled(job.id);
-      if (job.project_id) setProjectState(job.project_id, 'draft');
+      if (job.project_id && job.kind === 'build') setProjectState(job.project_id, 'draft');
       return;
     }
     const message = error instanceof Error ? error.message : String(error);
     fail(job.id, message);
-    if (job.project_id) setProjectState(job.project_id, 'failed', message);
+    // Seule la fabrication porte l'etat du projet : un dessin rate ne rend pas la carte
+    // invalide, et la marquer « echec » effacerait l'etat « publiee » qu'elle vient d'obtenir.
+    if (job.project_id && job.kind === 'build') setProjectState(job.project_id, 'failed', message);
   }
 }
 

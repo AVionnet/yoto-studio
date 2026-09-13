@@ -14,6 +14,7 @@ import { authRoutes } from './routes/auth.ts';
 import { cardRoutes } from './routes/cards.ts';
 import { encodeRoutes } from './routes/encode.ts';
 import { homeRoutes } from './routes/home.ts';
+import { labelRoutes } from './routes/labels.ts';
 import { playerRoutes } from './routes/player.ts';
 import { projectRoutes } from './routes/projects.ts';
 import { settingsRoutes } from './routes/settings.ts';
@@ -62,6 +63,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(cardRoutes);
   await app.register(encodeRoutes);
   await app.register(projectRoutes);
+  await app.register(labelRoutes);
   await app.register(playerRoutes);
   await app.register(settingsRoutes);
   await app.register(storyRoutes);

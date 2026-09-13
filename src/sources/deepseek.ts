@@ -1,5 +1,5 @@
 /**
- * Ecriture d'histoires avec DeepSeek.
+ * Appels a DeepSeek : ecriture d'histoires, et dictee de dessins.
  *
  * L'API est compatible avec le format OpenAI. On demande une reponse en JSON strict plutot que
  * du texte libre : decouper des chapitres a l'expression reguliere sur une prose generee est
@@ -7,14 +7,90 @@
  */
 import { config } from '../config.ts';
 
-export class StoryError extends Error {
+export class DeepseekError extends Error {
   readonly hint: string | undefined;
 
   constructor(message: string, hint?: string) {
     super(message);
-    this.name = 'StoryError';
+    this.name = 'DeepseekError';
     this.hint = hint;
   }
+}
+
+export interface ChatMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+}
+
+export interface ChatOptions {
+  /** Bas pour un travail contraint, haut pour de la fiction. */
+  temperature: number;
+  timeoutMs: number;
+}
+
+export const isConfigured = (): boolean => Boolean(config.deepseek.apiKey);
+
+/**
+ * Un aller-retour avec le modele, reponse en JSON strict.
+ *
+ * Deux pieges de cette API, payes tous les deux en developpement :
+ *  - `response_format: json_object` exige que le mot « json » figure quelque part dans les
+ *    messages, sinon la requete est refusee avant meme d'atteindre le modele ;
+ *  - le modele configure doit rester `deepseek-chat`, qui repond directement. Appeles par leur
+ *    nom, `deepseek-flash` et `deepseek-v4-pro` reflechissent d'abord, et epuisent parfois tout
+ *    leur budget de jetons en raisonnement sans jamais ecrire la reponse.
+ */
+export async function chatJson(messages: ChatMessage[], options: ChatOptions): Promise<string> {
+  if (!config.deepseek.apiKey) {
+    throw new DeepseekError(
+      "Aucune clé DeepSeek n'est configurée.",
+      'Renseigne DEEPSEEK_API_KEY dans le fichier .env.',
+    );
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(config.deepseek.apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${config.deepseek.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: config.deepseek.model,
+        messages,
+        response_format: { type: 'json_object' },
+        temperature: options.temperature,
+      }),
+      signal: AbortSignal.timeout(options.timeoutMs),
+    });
+  } catch (cause) {
+    throw new DeepseekError(`DeepSeek injoignable : ${(cause as Error).message}`);
+  }
+
+  const body = (await response.json().catch(() => ({}))) as {
+    choices?: { message?: { content?: string }; finish_reason?: string }[];
+    error?: { message?: string };
+  };
+
+  if (!response.ok) {
+    const detail = body.error?.message ?? `HTTP ${response.status}`;
+    throw new DeepseekError(
+      `DeepSeek a refusé la demande : ${detail}`,
+      response.status === 401 ? 'La clé API est absente ou invalide.' : undefined,
+    );
+  }
+
+  const choice = body.choices?.[0];
+  const content = choice?.message?.content;
+  if (!content) {
+    throw new DeepseekError(
+      choice?.finish_reason === 'length'
+        ? "DeepSeek a été coupé avant d'avoir fini sa réponse."
+        : 'DeepSeek a répondu sans contenu.',
+    );
+  }
+  return content;
 }
 
 export interface Chapter {
@@ -62,7 +138,7 @@ function parseStory(raw: string): Story {
   try {
     payload = JSON.parse(raw);
   } catch {
-    throw new StoryError("La réponse du modèle n'était pas du JSON exploitable.");
+    throw new DeepseekError("La réponse du modèle n'était pas du JSON exploitable.");
   }
 
   const record = payload as { title?: unknown; chapters?: unknown };
@@ -78,7 +154,7 @@ function parseStory(raw: string): Story {
       text: String(entry.text).trim(),
     }));
 
-  if (cleaned.length === 0) throw new StoryError("Le modèle n'a produit aucun chapitre.");
+  if (cleaned.length === 0) throw new DeepseekError("Le modèle n'a produit aucun chapitre.");
 
   return {
     title: typeof record.title === 'string' && record.title.trim()
@@ -88,18 +164,9 @@ function parseStory(raw: string): Story {
   };
 }
 
-export const isConfigured = (): boolean => Boolean(config.deepseek.apiKey);
-
 export async function writeStory(input: StoryRequest): Promise<Story> {
-  if (!config.deepseek.apiKey) {
-    throw new StoryError(
-      "Aucune clé DeepSeek n'est configurée.",
-      'Renseigne DEEPSEEK_API_KEY dans le fichier .env.',
-    );
-  }
-
   const chapters = Math.min(Math.max(input.chapters, MIN_CHAPTERS), MAX_CHAPTERS);
-  const messages = [
+  const messages: ChatMessage[] = [
     { role: 'system', content: SYSTEM_PROMPT },
     ...(input.history ?? []),
     {
@@ -110,42 +177,7 @@ export async function writeStory(input: StoryRequest): Promise<Story> {
     },
   ];
 
-  let response: Response;
-  try {
-    response = await fetch(config.deepseek.apiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${config.deepseek.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: config.deepseek.model,
-        messages,
-        response_format: { type: 'json_object' },
-        temperature: 1.3, // registre créatif, recommandé par DeepSeek pour la fiction
-      }),
-      // Une histoire de dix chapitres prend un moment à écrire.
-      signal: AbortSignal.timeout(180_000),
-    });
-  } catch (cause) {
-    throw new StoryError(`DeepSeek injoignable : ${(cause as Error).message}`);
-  }
-
-  const body = (await response.json().catch(() => ({}))) as {
-    choices?: { message?: { content?: string } }[];
-    error?: { message?: string };
-  };
-
-  if (!response.ok) {
-    const detail = body.error?.message ?? `HTTP ${response.status}`;
-    throw new StoryError(
-      `DeepSeek a refusé la demande : ${detail}`,
-      response.status === 401 ? 'La clé API est absente ou invalide.' : undefined,
-    );
-  }
-
-  const content = body.choices?.[0]?.message?.content;
-  if (!content) throw new StoryError('DeepSeek a répondu sans contenu.');
-
-  return parseStory(content);
+  // Registre créatif : 1,3 est la température recommandée par DeepSeek pour la fiction.
+  // Une histoire de dix chapitres prend un moment à écrire, d'où les trois minutes.
+  return parseStory(await chatJson(messages, { temperature: 1.3, timeoutMs: 180_000 }));
 }

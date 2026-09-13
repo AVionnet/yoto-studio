@@ -30,6 +30,7 @@ import {
 } from '../../db/projects.ts';
 import { enqueue, getJob, isTerminal, latestJobFor, requestCancel } from '../../jobs/queue.ts';
 import { projectDir } from '../../jobs/worker.ts';
+import { removeCover, storeCover } from '../../pipeline/cover.ts';
 import { titleFromFilename } from '../../pipeline/publish.ts';
 import {
   cutSegment,
@@ -39,6 +40,8 @@ import {
   type Segment,
 } from '../../pipeline/segment.ts';
 import { AUDIO_EXTENSIONS, MAX_TRACKS_PER_CARD } from '../../pipeline/upload.ts';
+import { drawCover, drawIcon } from '../../sources/artwork.ts';
+import { isConfigured } from '../../sources/deepseek.ts';
 import { probe } from '../../sources/youtube.ts';
 import {
   deleteCard,
@@ -283,6 +286,30 @@ function iconPickerPage(
       </section>
 
       <section class="panel">
+        <h2>Faire dessiner l'icône</h2>
+        <p class="muted">
+          Le dessin est dicté par DeepSeek en grandes formes, puis réduit à 16×16 — une icône
+          reste une silhouette, pas une miniature.
+        </p>
+        ${isConfigured()
+          ? html`
+              <form method="post"
+                    action="/projets/${project.id}/pistes/${track.idx}/icone/dessiner" data-guard>
+                <label for="sujet">Quoi dessiner</label>
+                <input id="sujet" name="sujet" maxlength="200" value="${track.title}" required>
+                <button type="submit" data-busy-label="Dessin en cours…">
+                  ${track.icon_media_id ? 'Redessiner' : 'Dessiner'}
+                </button>
+              </form>
+              <script src="/static/form.js"></script>
+            `
+          : html`<p class="alert error">
+              Aucune clé DeepSeek n'est configurée : renseigne DEEPSEEK_API_KEY dans le
+              fichier .env.
+            </p>`}
+      </section>
+
+      <section class="panel">
         <h2>Importer une image</h2>
         <p class="muted">PNG ou GIF, idéalement en 16×16 pixels.</p>
         <form method="post" action="/projets/${project.id}/pistes/${track.idx}/icone/televerser"
@@ -299,6 +326,8 @@ function iconPickerPage(
 }
 
 function coverPickerPage(project: Project, error?: string): string {
+  const aiReady = isConfigured();
+
   return layout(
     { title: `Couverture — ${project.title}`, nav: 'projects' },
     html`
@@ -326,6 +355,34 @@ function coverPickerPage(project: Project, error?: string): string {
           <input id="fichier" name="fichier" type="file" accept="image/jpeg,image/png" required>
           <button type="submit">Téléverser et utiliser</button>
         </form>
+      </section>
+
+      <section class="panel">
+        <h2>Faire dessiner la couverture</h2>
+        <p class="muted">
+          DeepSeek dicte l'illustration en formes découpées, que le serveur met en image. Le
+          titre et le début de l'histoire suffisent ; la consigne ci-dessous n'est là que pour
+          orienter. Redessiner donne un autre dessin à chaque fois.
+        </p>
+        ${aiReady
+          ? html`
+              <form method="post" action="/projets/${project.id}/couverture/dessiner" data-guard>
+                <label for="consigne">Consigne (facultative)</label>
+                <input id="consigne" name="consigne" maxlength="400"
+                       placeholder="Une tortue verte au bord d'une rivière, au crépuscule">
+                <button type="submit" data-busy-label="Dessin en cours…">
+                  ${project.cover_url ? 'Redessiner' : 'Dessiner'}
+                </button>
+                <p class="muted" data-busy-note hidden>
+                  Une dizaine de secondes. Ne recharge pas la page.
+                </p>
+              </form>
+              <script src="/static/form.js"></script>
+            `
+          : html`<p class="alert error">
+              Aucune clé DeepSeek n'est configurée : renseigne DEEPSEEK_API_KEY dans le
+              fichier .env.
+            </p>`}
       </section>
 
       <p><a href="/projets/${project.id}">Retour au projet</a></p>
@@ -515,6 +572,10 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
               <a href="/projets/${project.id}/couverture">
                 ${project.cover_url ? 'Changer la couverture' : 'Choisir une couverture'}
               </a>
+              ${project.cover_url
+                ? html` ·
+                    <a href="/projets/${project.id}/etiquette">Étiquette à découper</a>`
+                : ''}
             </div>
           </div>
 
@@ -536,7 +597,7 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
                 </form>`
               : ''}
 
-            ${job?.state === 'done'
+            ${job?.state === 'done' && job.kind === 'build'
               ? (JSON.parse(job.result_json ?? '{}') as { isNew?: boolean }).isNew
                 ? html`<div class="alert ok" style="display:block">
                     <p><strong>Contenu créé</strong> sous l'identifiant <code>${project.card_id}</code>.</p>
@@ -607,9 +668,16 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
           ${tracks.length > 0
             ? html`<section class="panel">
                 <h2>${tracks.length} piste(s)</h2>
-                <p>
+                <div class="picker">
                   <a class="button" href="/projets/${project.id}/ecouter">Écouter</a>
-                </p>
+                  ${isConfigured() && !running && tracks.some((track) => !track.icon_media_id)
+                    ? html`<form method="post" action="/projets/${project.id}/icones/dessiner">
+                        <button class="button ghost" type="submit">
+                          Dessiner les icônes manquantes
+                        </button>
+                      </form>`
+                    : ''}
+                </div>
                 <table class="stack">
                   <thead><tr><th>#</th><th>Titre</th><th>Icône</th><th>Transcodé</th></tr></thead>
                   <tbody>
@@ -740,6 +808,41 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
     },
   );
 
+  app.post<{ Params: { id: string; idx: string }; Body: { sujet?: string } }>(
+    '/projets/:id/pistes/:idx/icone/dessiner',
+    async (request, reply) => {
+      const projectId = Number(request.params.id);
+      const idx = Number(request.params.idx);
+      const project = getProject(projectId);
+      if (!project) return reply.status(404).send('Projet introuvable.');
+      const track = listTracks(projectId).find((row) => row.idx === idx);
+      if (!track) return reply.status(404).send('Piste introuvable.');
+
+      try {
+        const icon = await drawIcon(request.body?.sujet?.trim() || track.title);
+        const uploaded = await uploadIcon(icon, `piste-${idx + 1}.png`);
+        setTrackIcon(projectId, idx, uploaded.mediaId, uploaded.url ?? null);
+        // Retour a la page des icones, et non au projet : un dessin se regarde, et se refait.
+        return reply.redirect(`/projets/${projectId}/pistes/${idx}/icone`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return reply.type('text/html').send(iconPickerPage(project, track, [], [], '', message));
+      }
+    },
+  );
+
+  app.post<{ Params: { id: string } }>('/projets/:id/icones/dessiner', async (request, reply) => {
+    const projectId = Number(request.params.id);
+    const project = getProject(projectId);
+    if (!project) return reply.redirect('/');
+
+    const job = latestJobFor(projectId);
+    if (job && !isTerminal(job.state)) return reply.redirect(`/projets/${projectId}`);
+
+    enqueue('artwork', { projectId }, projectId);
+    return reply.redirect(`/projets/${projectId}`);
+  });
+
   app.get<{ Params: { id: string } }>('/projets/:id/couverture', async (request, reply) => {
     const project = getProject(Number(request.params.id));
     if (!project) return reply.status(404).send('Projet introuvable.');
@@ -760,6 +863,8 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
       const bytes = await file.toBuffer();
       const cover = await uploadCover(bytes, file.mimetype);
       setProjectCover(projectId, cover.mediaUrl);
+      // Yoto ne rend qu'une version reduite : l'original reste ici pour l'etiquette imprimee.
+      await storeCover(projectId, bytes, file.mimetype);
       return reply.redirect(`/projets/${projectId}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -767,9 +872,39 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
+  app.post<{ Params: { id: string }; Body: { consigne?: string } }>(
+    '/projets/:id/couverture/dessiner',
+    async (request, reply) => {
+      const projectId = Number(request.params.id);
+      const project = getProject(projectId);
+      if (!project) return reply.status(404).send('Projet introuvable.');
+
+      // Le debut de l'histoire, quand elle existe, vaut mieux que n'importe quelle consigne :
+      // le dessin parle alors de ce que la carte raconte vraiment.
+      const first = listTracks(projectId).find((track) => track.text)?.text;
+      const consigne = request.body?.consigne?.trim();
+
+      try {
+        const png = await drawCover({
+          title: project.title,
+          ...(first ? { summary: first.slice(0, 600) } : {}),
+          ...(consigne ? { extra: consigne } : {}),
+        });
+        const cover = await uploadCover(png, 'image/png');
+        setProjectCover(projectId, cover.mediaUrl);
+        await storeCover(projectId, png, 'image/png');
+        return reply.redirect(`/projets/${projectId}/couverture`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return reply.type('text/html').send(coverPickerPage(project, message));
+      }
+    },
+  );
+
   app.post<{ Params: { id: string } }>('/projets/:id/couverture/retirer', async (request, reply) => {
     const projectId = Number(request.params.id);
     setProjectCover(projectId, null);
+    await removeCover(projectId);
     return reply.redirect(`/projets/${projectId}`);
   });
 

@@ -22,7 +22,7 @@ import {
 } from '../../db/projects.ts';
 import { projectDir } from '../../jobs/worker.ts';
 import { measureEdges, probeDurationMs } from '../../pipeline/segment.ts';
-import { MAX_CHAPTERS, isConfigured, writeStory, StoryError } from '../../sources/deepseek.ts';
+import { MAX_CHAPTERS, isConfigured, writeStory, DeepseekError } from '../../sources/deepseek.ts';
 import { html, layout, raw } from '../html.ts';
 import { requireAuth } from './auth.ts';
 
@@ -97,7 +97,7 @@ export async function storyRoutes(app: FastifyInstance): Promise<void> {
           chapters: Number(request.body.chapters) || 3,
         });
       } catch (error) {
-        const hint = error instanceof StoryError ? error.hint : undefined;
+        const hint = error instanceof DeepseekError ? error.hint : undefined;
         return reply
           .type('text/html')
           .send(newStoryPage(`${(error as Error).message}${hint ? ` ${hint}` : ''}`));
