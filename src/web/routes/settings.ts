@@ -118,16 +118,22 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
       const copies = encoded.get(card.card_id) ?? 0;
       return html`
         <tr>
-          <td>
-            <strong>${card.nickname}</strong>
-            ${copies > 0
-              ? html`<br><span class="muted">${copies} carte(s) encodée(s)</span>`
-              : ''}
+          <td data-label="Surnom">
+            <div>
+              <strong>${card.nickname}</strong>
+              ${copies > 0
+                ? html`<br><span class="muted">${copies} carte(s) encodée(s)</span>`
+                : ''}
+            </div>
           </td>
-          <td><code>${card.card_id}</code></td>
-          <td>${source ? source.title : raw('<span class="muted">introuvable chez Yoto</span>')}</td>
-          <td class="${used >= MAX_TRACKS ? 'alert-text' : ''}">${used} / ${MAX_TRACKS}</td>
-          <td>
+          <td data-label="cardId"><code>${card.card_id}</code></td>
+          <td data-label="Contenu">
+            ${source ? source.title : raw('<span class="muted">introuvable chez Yoto</span>')}
+          </td>
+          <td data-label="Pistes" class="${used >= MAX_TRACKS ? 'alert-text' : ''}">
+            ${used} / ${MAX_TRACKS}
+          </td>
+          <td class="act">
             <form method="post" action="/cartes/retirer" class="inline">
               <input type="hidden" name="cardId" value="${card.card_id}">
               <button class="link" type="submit">Retirer</button>
@@ -142,10 +148,12 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
       .map(
         (card) => html`
           <tr>
-            <td>${card.title}</td>
-            <td><code>${card.cardId}</code></td>
-            <td>${formatDuration(durationOf(card as unknown as Record<string, unknown>))}</td>
-            <td>
+            <td data-label="Titre">${card.title}</td>
+            <td data-label="cardId"><code>${card.cardId}</code></td>
+            <td data-label="Durée">
+              ${formatDuration(durationOf(card as unknown as Record<string, unknown>))}
+            </td>
+            <td class="act">
               <form method="post" action="/cartes/enroler" class="inline">
                 <input type="hidden" name="cardId" value="${card.cardId}">
                 <input name="nickname" placeholder="son surnom" required maxlength="60">
@@ -172,7 +180,7 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
             </p>
             ${pool.length === 0
               ? html`<p class="muted">Aucune carte enrôlée pour l'instant.</p>`
-              : html`<table>
+              : html`<table class="stack">
                   <thead>
                     <tr><th>Surnom</th><th>cardId</th><th>Contenu</th><th>Pistes</th><th></th></tr>
                   </thead>
@@ -189,7 +197,7 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
             </p>
             ${candidates.length === 0
               ? html`<p class="muted">Rien à enrôler.</p>`
-              : html`<table>
+              : html`<table class="stack">
                   <thead><tr><th>Titre</th><th>cardId</th><th>Durée</th><th></th></tr></thead>
                   <tbody>${candidates}</tbody>
                 </table>`}

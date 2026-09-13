@@ -195,9 +195,14 @@ button.link {
 }
 button.link:hover { background: color-mix(in srgb, var(--coral) 30%, transparent); }
 
+/* `inline-flex` se dimensionne sur son contenu et ignore le cadre : sans `max-width`, un
+   formulaire un peu long dépasse de la page au lieu de se replier. */
 form.inline { display: inline-flex; gap: var(--space-2); align-items: center; margin: 0;
-              flex-wrap: wrap; }
+              flex-wrap: wrap; max-width: 100%; }
 form.inline input, form.inline select { margin: 0; width: auto; min-width: 190px; }
+/* Un menu déroulant se dimensionne sur son option la plus longue, sans se soucier du cadre :
+   celui-ci garde 190 px comme point de départ, mais accepte de se replier. */
+form.inline select { flex: 1 1 190px; min-width: 0; max-width: 100%; }
 
 progress {
   width: 100%; height: 14px; margin-top: var(--space-2);
@@ -546,6 +551,49 @@ main.centered .brand-badge {
 }
 main.centered .panel label { text-align: left; }
 main.centered .panel button { width: 100%; }
+
+/* ── Tableaux sur téléphone ────────────────────────────────────────────── */
+
+/* Cinq colonnes en `nowrap` ne tiennent pas dans un écran de téléphone, et c'est toute la page
+   qui se met à glisser de côté — `overflow-x: hidden` sur le corps n'y change rien, la racine
+   défile quand même. Sous 700 px, les tableaux marqués `stack` se déplient donc : une fiche par
+   ligne, l'intitulé de colonne repris devant chaque valeur. Les tableaux de chiffres courts,
+   eux, restent des tableaux : ils tiennent déjà. */
+@media (max-width: 700px) {
+  .stack, .stack tbody, .stack tr, .stack td { display: block; width: auto; }
+  .stack thead { display: none; }
+
+  .stack tr {
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
+  }
+  .stack tr:last-child { border-bottom: none; }
+
+  /* Grille plutôt que flux : une valeur longue s'aligne sous elle-même, pas sous l'intitulé.
+     D'où aussi le `div` qui enveloppe les cellules à plusieurs éléments — sans lui, chaque
+     morceau deviendrait une case de la grille. */
+  .stack td {
+    display: grid; grid-template-columns: 7.5em 1fr; gap: var(--space-3);
+    align-items: baseline;
+    padding: 3px 0; border: none; text-align: left; white-space: normal;
+  }
+  .stack td::before {
+    content: attr(data-label);
+    font-size: 11px; letter-spacing: .08em; text-transform: uppercase; font-weight: 700;
+    color: var(--neutral-700);
+  }
+
+  /* Une case de grille s'étire par défaut : la pastille d'un cardId ferait alors une bande
+     beige sur toute la largeur. Le texte, lui, garde la colonne entière pour se replier. */
+  .stack td > code, .stack td > a { justify-self: start; }
+
+  /* La cellule d'action n'a pas d'intitulé : elle prend toute la largeur, et son formulaire
+     cesse de se serrer sur une seule ligne. */
+  .stack td.act { grid-template-columns: 1fr; margin-top: var(--space-2); }
+  .stack td.act::before { content: none; }
+  .stack td.act form.inline { flex-wrap: wrap; justify-content: flex-start; width: 100%; }
+  .stack td.act form.inline input { width: 100%; }
+}
 
 /* ── Encodage NFC ──────────────────────────────────────────────────────── */
 

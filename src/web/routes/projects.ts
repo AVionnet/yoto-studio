@@ -610,22 +610,24 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
                 <p>
                   <a class="button" href="/projets/${project.id}/ecouter">Écouter</a>
                 </p>
-                <table>
+                <table class="stack">
                   <thead><tr><th>#</th><th>Titre</th><th>Icône</th><th>Transcodé</th></tr></thead>
                   <tbody>
                     ${tracks.map(
                       (track) => html`<tr>
-                        <td>${track.idx + 1}</td>
-                        <td>
-                          ${track.title}
-                          ${!isEdgeClean(track)
-                            ? html`<span class="chip warn"
-                                    title="Le début ou la fin de cette piste semble couper un mot.">
-                                    ⚠️ coupe
-                                  </span>`
-                            : ''}
+                        <td data-label="Piste">${track.idx + 1}</td>
+                        <td data-label="Titre">
+                          <div>
+                            ${track.title}
+                            ${!isEdgeClean(track)
+                              ? html`<span class="chip warn"
+                                      title="Le début ou la fin de cette piste semble couper un mot.">
+                                      ⚠️ coupe
+                                    </span>`
+                              : ''}
+                          </div>
                         </td>
-                        <td>
+                        <td data-label="Icône">
                           <a class="track-icon-link"
                              href="/projets/${project.id}/pistes/${track.idx}/icone">
                             ${track.icon_url
@@ -634,7 +636,7 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
                             ${track.icon_media_id ? 'Changer' : 'Choisir'}
                           </a>
                         </td>
-                        <td>${track.transcoded_sha256 ? '✓' : '—'}</td>
+                        <td data-label="Transcodé">${track.transcoded_sha256 ? '✓' : '—'}</td>
                       </tr>`,
                     )}
                   </tbody>
