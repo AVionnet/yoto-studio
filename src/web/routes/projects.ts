@@ -6,7 +6,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
-import { mkdir, mkdtemp, rename, rm } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, rename, rm, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, extname, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
@@ -397,6 +397,17 @@ function reissue(request: { session: { formToken?: string } }, error: string): s
   return newProjectPage(token, error);
 }
 
+/** Le dossier de depot vit dans /tmp, souvent un autre disque que /media : rename n'y suffit pas. */
+async function moveFile(from: string, to: string): Promise<void> {
+  try {
+    await rename(from, to);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EXDEV') throw error;
+    await copyFile(from, to);
+    await unlink(from);
+  }
+}
+
 export async function projectRoutes(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', requireAuth);
 
@@ -491,7 +502,7 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
         await mkdir(directory, { recursive: true });
         const source = staged[0]!;
         const final = join(directory, `source${extname(source.name)}`);
-        await rename(source.path, final);
+        await moveFile(source.path, final);
         setProjectSource(projectId, final);
         return reply.redirect(`/projets/${projectId}`);
       }
@@ -501,7 +512,7 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
         await mkdir(directory, { recursive: true });
         for (const [index, file] of staged.entries()) {
           const final = join(directory, `${String(index + 1).padStart(2, '0')}${extname(file.name)}`);
-          await rename(file.path, final);
+          await moveFile(file.path, final);
           addTrack({
             projectId,
             idx: index,
