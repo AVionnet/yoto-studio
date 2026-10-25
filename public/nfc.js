@@ -105,12 +105,22 @@
         fix: 'Active-le (' + NFC_SETTINGS + '), ferme les applis qui l’utilisent (NFC Tools, '
           + 'paiement sans contact ouvert…), puis recharge la page.',
       },
-      NetworkError: {
-        text: 'La liaison avec la carte a été coupée pendant ' + (writing ? 'l’écriture.' : 'la lecture.'),
-        fix: 'Pose la carte à plat contre le dos du téléphone — la zone NFC est souvent au centre '
-          + 'ou près de l’appareil photo —, retire une coque épaisse ou métallique, et ne bouge '
-          + 'plus jusqu’au message. Puis recommence.',
-      },
+      NetworkError: writing
+        ? {
+            text: 'L’écriture a échoué sur cette puce.',
+            fix: 'Deux causes possibles. 1) La puce a bougé : pose-la à plat contre le dos du '
+              + 'téléphone (zone NFC souvent au centre ou près de l’appareil photo), sans coque '
+              + 'épaisse, et ne bouge plus. 2) Si l’erreur revient immobile, la puce n’est pas '
+              + 'au bon format : formate-la une fois avec les deux commandes de « Si ça bloque », '
+              + 'et vérifie que c’est une Ultralight EV1 de 48 octets (numéro à 7 octets commençant '
+              + 'par 04) — les puces bon marché à numéro court sont souvent refusées.',
+          }
+        : {
+            text: 'La liaison avec la carte a été coupée pendant la lecture.',
+            fix: 'Pose la carte à plat contre le dos du téléphone — la zone NFC est souvent au '
+              + 'centre ou près de l’appareil photo —, retire une coque épaisse ou métallique, et '
+              + 'ne bouge plus jusqu’au message. Puis recommence.',
+          },
       AbortError: {
         text: 'L’opération a été interrompue.',
         fix: 'Garde l’écran allumé et cette page au premier plan pendant toute l’opération, puis '

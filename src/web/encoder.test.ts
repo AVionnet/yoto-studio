@@ -78,6 +78,12 @@ const reading = (url: string, serialNumber: string) => ({
 
 const blankReading = (serialNumber: string) => ({ serialNumber, message: { records: [] } });
 
+/** Une puce formatée mais sans contenu : un unique enregistrement NDEF vide. */
+const emptyReading = (serialNumber: string) => ({
+  serialNumber,
+  message: { records: [{ recordType: 'empty', data: new Uint8Array() }] },
+});
+
 /** Une erreur telle que Web NFC la leve : un DOMException dont seul le nom compte. */
 const nfcError = (name: string, message = 'refusé'): Error =>
   Object.assign(new Error(message), { name });
@@ -291,6 +297,14 @@ describe('atelier', () => {
 
     assert.deepEqual(h.writes, [CARD_URL]);
     assert.equal(h.posts.at(-1)?.body['uid'], '');
+  });
+
+  it('traite une puce au contenu NDEF vide comme une vierge, sans confirmation', async () => {
+    const h = await start({ stories: [JACK], dataset: { targetCard: 'AbC12' } });
+    await h.present(emptyReading(BLANK));
+
+    assert.deepEqual(h.writes, [CARD_URL]);
+    assert.doesNotMatch(h.el['journal']!.innerHTML, /n’est pas vierge/);
   });
 
   it('n’écrit rien tant qu’aucune histoire n’est choisie', async () => {

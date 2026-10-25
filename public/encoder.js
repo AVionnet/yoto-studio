@@ -223,11 +223,14 @@
         + titleOf(story) + '.</p>'));
       return Promise.resolve();
     }
-    var records = message ? nfc.describeRecords(message) : [];
-    if (records.length > 0 && overwrite !== uid) {
+    // Un enregistrement « empty » = puce formatée mais sans contenu : c'est une vierge, on écrit.
+    var written = message
+      ? nfc.describeRecords(message).filter(function (r) { return r.type !== 'empty'; })
+      : [];
+    if (written.length > 0 && overwrite !== uid) {
       var found = nfc.parseYoto(url);
       log(nfc.verdict('warn', '<p><strong>Cette carte n’est pas vierge</strong> : elle porte '
-        + (found ? 'l’histoire <code>' + esc(found.cardId) + '</code>' : esc(records[0].text))
+        + (found ? 'l’histoire <code>' + esc(found.cardId) + '</code>' : esc(written[0].text))
         + '.</p><p>Pour la remplacer par ' + titleOf(story) + ', '
         + '<button class="link" type="button" data-ecraser="' + esc(uid) + '">autorise la '
         + 'réécriture</button> puis repose-la. Une carte officielle verrouillée refusera.</p>'));
