@@ -107,13 +107,12 @@
       },
       NetworkError: writing
         ? {
-            text: 'L’écriture a échoué sur cette puce.',
-            fix: 'Deux causes possibles. 1) La puce a bougé : pose-la à plat contre le dos du '
-              + 'téléphone (zone NFC souvent au centre ou près de l’appareil photo), sans coque '
-              + 'épaisse, et ne bouge plus. 2) Si l’erreur revient immobile, la puce n’est pas '
-              + 'au bon format : formate-la une fois avec les deux commandes de « Si ça bloque », '
-              + 'et vérifie que c’est une Ultralight EV1 de 48 octets (numéro à 7 octets commençant '
-              + 'par 04) — les puces bon marché à numéro court sont souvent refusées.',
+            text: 'L’écriture a échoué : la puce n’est sans doute pas encore formatée NDEF.',
+            fix: 'Cause la plus fréquente sur une puce neuve : Chrome ne sait pas la formater seul. '
+              + 'Formate-la UNE fois avec l’app NFC Tools (fonction « Autres » → « Effacer le tag », '
+              + 'ou les deux commandes de « Si ça bloque »), puis reviens écrire ici — ça marchera. '
+              + 'Si l’erreur persiste même immobile et formatée, vérifie que la puce a bien bougé, '
+              + 'ou qu’elle n’est pas verrouillée (NFC Tools indique « Inscriptible : non »).',
           }
         : {
             text: 'La liaison avec la carte a été coupée pendant la lecture.',

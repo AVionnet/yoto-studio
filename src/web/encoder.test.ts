@@ -48,6 +48,7 @@ interface FakeElement {
   dataset: Record<string, string>;
   options: Option[];
   selectedIndex: number;
+  classList: { add(c: string): void; remove(c: string): void };
   appendChild(option: Option): void;
   addEventListener(type: string, fn: (event: unknown) => unknown): void;
   fire(type: string, event?: unknown): Promise<unknown[]>;
@@ -58,6 +59,7 @@ function fakeElement(): FakeElement {
   const element: FakeElement = {
     textContent: '', innerHTML: '', className: '', hidden: false, disabled: false, value: '',
     dataset: {}, options: [], selectedIndex: 0,
+    classList: { add() {}, remove() {} },
     appendChild(option) {
       element.options.push(option);
     },
@@ -89,8 +91,8 @@ const nfcError = (name: string, message = 'refusé'): Error =>
   Object.assign(new Error(message), { name });
 
 const IDS = [
-  'indispo', 'enregistrer', 'etat', 'resultat', 'atelier', 'histoire', 'demarrer', 'consigne',
-  'journal', 'lecteur', 'scanner', 'rapport',
+  'indispo', 'enregistrer', 'etat', 'resultat', 'atelier', 'histoire', 'relever', 'etat-relever',
+  'panneau-ecrire', 'ecrire', 'etat-ecrire', 'consigne', 'journal', 'lecteur', 'scanner', 'rapport',
 ];
 
 interface Harness {
@@ -204,11 +206,9 @@ function load(options: {
 const ATELIER_ONLY = ['enregistrer', 'lecteur'];
 const JACK = { value: 'AbC12', textContent: 'Jack et le haricot magique · 1 copie(s)' };
 
-/** Ouvre l'atelier et lance la lecture continue. */
-async function start(options: Parameters<typeof load>[0] = {}): Promise<Harness> {
+/** Charge l'atelier (passeur déjà enregistré). */
+async function atelier(options: Parameters<typeof load>[0] = {}): Promise<Harness> {
   const h = load({ without: ATELIER_ONLY, ...options });
-  await h.settle();
-  await h.el['demarrer']!.fire('click');
   await h.settle();
   return h;
 }
@@ -236,139 +236,118 @@ describe('enregistrer le passeur', () => {
   });
 });
 
-describe('atelier', () => {
-  it('relève le passeur, nomme son histoire, puis copie sur la vierge suivante', async () => {
-    const h = await start();
-    assert.match(h.el['consigne']!.innerHTML, /pose le passeur/);
-
+describe('atelier — relever le passeur', () => {
+  it('relève le passeur, nomme son histoire et arme l’écriture', async () => {
+    const h = await atelier();
+    await h.el['relever']!.fire('click');
     await h.present(reading(CARD_URL, PASSEUR));
+
     assert.deepEqual(h.posts[0], { url: '/cartes/releve', body: { url: CARD_URL, uid: PASSEUR } });
     assert.match(h.el['journal']!.innerHTML, /Passeur relevé :<\/strong> « Jack et le haricot magique »/);
     assert.equal(h.el['histoire']!.value, 'AbC12');
-    assert.match(h.el['consigne']!.innerHTML, /Pose une carte vierge/);
-    assert.equal(h.writes.length, 0, 'le passeur ne se réécrit jamais');
-
-    await h.present(blankReading(BLANK));
-    assert.deepEqual(h.writes, [CARD_URL]);
-    assert.deepEqual(h.posts[1], { url: '/cartes/encoder', body: { url: CARD_URL, uid: BLANK } });
-    assert.match(h.el['journal']!.innerHTML, /Copie prête :<\/strong> « Jack et le haricot magique »/);
+    assert.equal(h.el['panneau-ecrire']!.hidden, false);
+    assert.equal(h.writes.length, 0, 'relever ne doit rien écrire');
   });
 
-  it('copie une histoire déjà relevée sans repasser par le passeur', async () => {
-    const h = await start({ stories: [JACK], dataset: { targetCard: 'AbC12' } });
-    assert.deepEqual(h.gets, ['/cartes/AbC12/adresse']);
+  it('refuse une carte qui n’est pas le passeur enregistré', async () => {
+    const h = await atelier();
+    await h.el['relever']!.fire('click');
+    await h.present(reading(CARD_URL, '04:99:99:99:99:99:90'));
 
-    await h.present(blankReading(BLANK));
-    assert.deepEqual(h.writes, [CARD_URL]);
+    assert.equal(h.posts.length, 0);
+    assert.match(h.el['journal']!.innerHTML, /n’est pas le passeur enregistré/);
   });
 
-  it('ne réécrit pas une carte déjà prête', async () => {
-    const h = await start({ stories: [JACK], dataset: { targetCard: 'AbC12' } });
-    await h.present(reading(CARD_URL, BLANK));
+  it('refuse une carte sans adresse Yoto', async () => {
+    const h = await atelier();
+    await h.el['relever']!.fire('click');
+    await h.present(blankReading(PASSEUR));
 
-    assert.equal(h.writes.length, 0);
-    assert.match(h.el['journal']!.innerHTML, /déjà prête/);
-  });
-
-  it('demande confirmation avant d’écraser une carte qui porte autre chose', async () => {
-    const h = await start({ stories: [JACK], dataset: { targetCard: 'AbC12' } });
-    const other = reading('https://yoto.io/ZZZ99?x', BLANK);
-
-    await h.present(other);
-    assert.equal(h.writes.length, 0);
-    assert.match(h.el['journal']!.innerHTML, /n’est pas vierge[\s\S]*<code>ZZZ99<\/code>/);
-
-    await h.el['journal']!.fire('click', { target: { dataset: { ecraser: BLANK }, parentNode: {} } });
-    await h.present(other);
-    assert.deepEqual(h.writes, [CARD_URL]);
-  });
-
-  it('reprend le scan après une écriture : deux vierges d’affilée sont copiées', async () => {
-    const h = await start({ stories: [JACK], dataset: { targetCard: 'AbC12' } });
-    await h.present(blankReading(BLANK));
-    await h.present(blankReading('04:99:88:77:66:55:90'));
-
-    assert.deepEqual(h.writes, [CARD_URL, CARD_URL]);
-    assert.equal(h.posts.filter((p) => p.url === '/cartes/encoder').length, 2);
-  });
-
-  it('ignore une carte laissée en place, qui se relit en boucle', async () => {
-    const h = await start({ stories: [JACK], dataset: { targetCard: 'AbC12' } });
-    await h.present(blankReading(BLANK));
-    await h.present(blankReading(BLANK));
-
-    assert.equal(h.writes.length, 1);
-  });
-
-  it('écrit sur une puce neuve illisible, que Chrome formate', async () => {
-    const h = await start({ stories: [JACK], dataset: { targetCard: 'AbC12' } });
-    await h.present('illisible');
-
-    assert.deepEqual(h.writes, [CARD_URL]);
-    assert.equal(h.posts.at(-1)?.body['uid'], '');
-  });
-
-  it('traite une puce au contenu NDEF vide comme une vierge, sans confirmation', async () => {
-    const h = await start({ stories: [JACK], dataset: { targetCard: 'AbC12' } });
-    await h.present(emptyReading(BLANK));
-
-    assert.deepEqual(h.writes, [CARD_URL]);
-    assert.doesNotMatch(h.el['journal']!.innerHTML, /n’est pas vierge/);
-  });
-
-  it('n’écrit rien tant qu’aucune histoire n’est choisie', async () => {
-    const h = await start();
-    await h.present(blankReading(BLANK));
-
-    assert.equal(h.writes.length, 0);
-    assert.match(h.el['journal']!.innerHTML, /Aucune histoire choisie/);
+    assert.equal(h.posts.length, 0);
+    assert.match(h.el['journal']!.innerHTML, /ne porte pas d’adresse Yoto/);
   });
 
   it('prévient quand le passeur porte une autre histoire que le projet ouvert', async () => {
-    const h = await start({ dataset: { targetCard: 'OTHER' } });
+    const h = await atelier({ dataset: { targetCard: 'OTHER' } });
+    await h.el['relever']!.fire('click');
     await h.present(reading(CARD_URL, PASSEUR));
 
     assert.match(h.el['journal']!.innerHTML, /alert warn[\s\S]*pas l’histoire du projet ouvert/);
   });
 
   it('relaie les problèmes trouvés au relevé, avec leur correction', async () => {
-    const h = await start();
+    const h = await atelier();
     h.replies['/cartes/releve'] = {
       ...IDENTITY,
       title: null,
       notes: [{ kind: 'error', text: 'Le contenu AbC12 n’existe pas', fix: 'Relie-le dans l’app' }],
     };
+    await h.el['relever']!.fire('click');
     await h.present(reading(CARD_URL, PASSEUR));
 
     assert.doesNotMatch(h.el['journal']!.innerHTML, /Passeur relevé/);
     assert.match(h.el['journal']!.innerHTML, /n’existe pas[\s\S]*Comment corriger :<\/strong> Relie-le/);
   });
 
-  it('signale une puce qui n’est pas une Ultralight EV1 de NXP', async () => {
-    const h = await start({ stories: [JACK], dataset: { targetCard: 'AbC12' } });
-    await h.present(blankReading('8e:d1:f9:04'));
-
-    assert.match(h.el['journal']!.innerHTML, /pas une Ultralight EV1/);
-  });
-
-  it('traduit un échec d’écriture en geste à faire', async () => {
-    const h = await start({ stories: [JACK], dataset: { targetCard: 'AbC12' } });
-    h.writeError = nfcError('NotSupportedError');
-    await h.present(blankReading(BLANK));
-
-    assert.match(h.el['journal']!.innerHTML, /n’est pas formatée NDEF/);
-    assert.equal(h.posts.length, 0);
-  });
-
-  it('explique un refus d’accès au NFC', async () => {
-    const h = load({ without: ATELIER_ONLY });
+  it('montre l’erreur de scan et sa correction', async () => {
+    const h = await atelier();
     h.scanError = nfcError('NotAllowedError');
-    await h.el['demarrer']!.fire('click');
+    await h.el['relever']!.fire('click');
     await h.settle();
 
     assert.match(h.el['journal']!.innerHTML, /Chrome n’a pas le droit d’utiliser le NFC/);
     assert.match(h.el['journal']!.innerHTML, /NotAllowedError — refusé/);
-    assert.equal(h.el['demarrer']!.textContent, 'Commencer');
+  });
+});
+
+describe('atelier — écrire sur une vierge', () => {
+  it('écrit l’histoire choisie dans la liste, sans aucun scan', async () => {
+    const h = await atelier({ stories: [JACK], dataset: { targetCard: 'AbC12' } });
+    assert.deepEqual(h.gets, ['/cartes/AbC12/adresse']);
+    assert.equal(h.el['panneau-ecrire']!.hidden, false);
+
+    await h.el['ecrire']!.fire('click');
+    await h.settle();
+
+    assert.deepEqual(h.writes, [CARD_URL]);
+    assert.deepEqual(h.posts.at(-1), { url: '/cartes/encoder', body: { url: CARD_URL, uid: '' } });
+    assert.match(h.el['journal']!.innerHTML, /Copie prête :<\/strong> « Jack et le haricot magique »/);
+  });
+
+  it('copie plusieurs vierges, un appui par carte', async () => {
+    const h = await atelier({ stories: [JACK], dataset: { targetCard: 'AbC12' } });
+    await h.el['ecrire']!.fire('click');
+    await h.settle();
+    await h.el['ecrire']!.fire('click');
+    await h.settle();
+
+    assert.deepEqual(h.writes, [CARD_URL, CARD_URL]);
+    assert.equal(h.posts.filter((p) => p.url === '/cartes/encoder').length, 2);
+  });
+
+  it('n’écrit rien tant qu’aucune histoire n’est choisie', async () => {
+    const h = await atelier();
+    assert.equal(h.el['panneau-ecrire']!.hidden, true);
+  });
+
+  it('traduit un échec d’écriture en geste à faire', async () => {
+    const h = await atelier({ stories: [JACK], dataset: { targetCard: 'AbC12' } });
+    h.writeError = nfcError('NotSupportedError');
+    await h.el['ecrire']!.fire('click');
+    await h.settle();
+
+    assert.match(h.el['journal']!.innerHTML, /n’est pas formatée NDEF/);
+    assert.equal(h.posts.filter((p) => p.url === '/cartes/encoder').length, 0);
+  });
+
+  it('écrit sur une vierge après avoir relevé une histoire inconnue de la liste', async () => {
+    const h = await atelier();
+    await h.el['relever']!.fire('click');
+    await h.present(reading(CARD_URL, PASSEUR));
+    await h.el['ecrire']!.fire('click');
+    await h.settle();
+
+    assert.deepEqual(h.writes, [CARD_URL]);
   });
 });
 
@@ -436,6 +415,7 @@ describe('navigateur sans Web NFC', () => {
   it('désactive l’atelier et l’explique, au lieu de planter', () => {
     const h = load({ without: ATELIER_ONLY, nfc: false });
     assert.equal(h.el['indispo']!.hidden, false);
-    assert.equal(h.el['demarrer']!.disabled, true);
+    assert.equal(h.el['relever']!.disabled, true);
+    assert.equal(h.el['ecrire']!.disabled, true);
   });
 });

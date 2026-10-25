@@ -150,19 +150,50 @@ function page(
             <div id="atelier" data-passeur="${passeur}" data-target-card="${target?.cardId ?? ''}"
                  data-projet="${target?.projectId ?? ''}" data-capacity="${TAG_CAPACITY}">
               <section class="panel">
-                <label for="histoire">Histoire à copier</label>
-                <select id="histoire">
-                  <option value="">Celle que porte le passeur — à relever</option>
-                  ${stories.map(
-                    (story) => html`<option value="${story.cardId}"
-                      ${story.cardId === target?.cardId ? 'selected' : ''}>
-                      ${story.title}${story.copies ? ` · ${story.copies} copie(s)` : ''}
-                    </option>`,
-                  )}
-                </select>
+                <h2>1. Choisir l'histoire</h2>
+                ${stories.length > 0
+                  ? html`
+                      <label for="histoire">Histoire à copier</label>
+                      <select id="histoire">
+                        ${stories.map((story, i) => {
+                          const chosen = target ? story.cardId === target.cardId : i === 0;
+                          return html`<option value="${story.cardId}" ${chosen ? 'selected' : ''}>
+                            ${story.title}${story.copies ? ` · ${story.copies} copie(s)` : ''}
+                          </option>`;
+                        })}
+                      </select>
+                      <details>
+                        <summary>Une autre histoire ? (relever le passeur)</summary>
+                        <p class="muted">
+                          Relie d'abord l'histoire au passeur dans l'app Yoto, puis relève-le — son
+                          adresse rejoindra la liste.
+                        </p>
+                        <button id="relever" type="button">Relever le passeur</button>
+                        <p class="status" id="etat-relever"></p>
+                      </details>
+                    `
+                  : html`
+                      <select id="histoire" hidden></select>
+                      <p>
+                        Aucune histoire connue encore. Relie une histoire au passeur dans l'app Yoto
+                        (« Link to a card »), puis relève-le ici :
+                      </p>
+                      <button id="relever" type="button">Relever le passeur</button>
+                      <p class="status" id="etat-relever"></p>
+                    `}
+              </section>
 
-                <p class="consigne" id="consigne">Appuie sur « Commencer ».</p>
-                <button id="demarrer" type="button">Commencer</button>
+              <section class="panel" id="panneau-ecrire" hidden>
+                <h2>2. Copier sur une carte vierge</h2>
+                <p class="alert warn" style="display:block">
+                  <strong>Une puce neuve doit être formatée une fois avant la première écriture.</strong>
+                  Chrome ne sait pas le faire : avec l'app <em>NFC Tools</em>, « Autres » → « Effacer
+                  le tag » (ou les commandes de « Si ça bloque » en bas). Sans ça, l'écriture échoue
+                  avec « IO error ». Une fois formatée, la puce s'écrit ici sans souci.
+                </p>
+                <p class="consigne" id="consigne"></p>
+                <button id="ecrire" type="button">Écrire sur une vierge</button>
+                <p class="status" id="etat-ecrire"></p>
                 <div id="journal" aria-live="polite"></div>
               </section>
 
