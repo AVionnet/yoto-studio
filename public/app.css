@@ -653,9 +653,6 @@ main.centered .panel button { width: 100%; }
 details { margin-top: var(--space-4); }
 summary { cursor: pointer; font-size: 14px; color: var(--neutral-700); margin-bottom: var(--space-2); }
 
-.faq { margin: 0 0 var(--space-6); }
-.faq dt { font-weight: 700; margin-top: var(--space-3); }
-.faq dd { margin: var(--space-1) 0 0; color: var(--neutral-800); font-size: 14.5px; }
 
 /* Le jeton d'une carte est un secret : il ne s'affiche qu'au toucher. */
 .masked { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }

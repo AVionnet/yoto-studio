@@ -98,7 +98,7 @@
 
   if (!nfc.supported) {
     unsupported.hidden = false;
-    relBtn.disabled = true;
+    if (relBtn) relBtn.disabled = true;
     changeBtn.disabled = true;
     writeBtn.disabled = true;
     return;
@@ -198,7 +198,9 @@
     });
   }
 
-  relBtn.addEventListener('click', function () {
+  // Absent quand l'adresse de l'histoire est déjà relevée : le passeur reste reconnu s'il est posé
+  // pendant une écriture.
+  if (relBtn) relBtn.addEventListener('click', function () {
     relBtn.disabled = true;
     say(relStatus, 'Pose le passeur contre le dos du téléphone…', true);
     nfc.scanOnce({
@@ -214,7 +216,7 @@
         }
         if (uid && uid !== passeur) {
           log(nfc.problem('Ce n’est pas le passeur enregistré.',
-            'Pose ta carte MYO officielle. Pour en changer, utilise « changer de passeur » plus bas.'));
+            'Pose ta carte MYO officielle. Pour en changer : page Cartes, « changer de passeur ».'));
           return;
         }
         releve(url, uid);

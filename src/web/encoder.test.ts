@@ -325,6 +325,14 @@ describe('atelier — écrire sur une vierge', () => {
     assert.equal(h.posts.filter((p) => p.url === '/cartes/encoder').length, 2);
   });
 
+  it('écrit l’histoire déjà relevée sans bouton de relevé sur la page', async () => {
+    const h = await atelier({ stories: [JACK], dataset: { targetCard: 'AbC12' }, without: [...ATELIER_ONLY, 'relever'] });
+    await h.el['ecrire']!.fire('click');
+    await h.settle();
+
+    assert.deepEqual(h.writes, [CARD_URL]);
+  });
+
   it('n’écrit rien tant qu’aucune histoire n’est choisie', async () => {
     const h = await atelier();
     assert.equal(h.el['panneau-ecrire']!.hidden, true);

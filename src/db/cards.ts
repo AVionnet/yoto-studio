@@ -224,17 +224,18 @@ export interface SyncReport {
   added: string[];
   retitled: string[];
   relinked: number;
-  /** Contenus connus ici qui n'existent plus chez Yoto : la carte qui les porte ne joue plus. */
-  missing: string[];
+  /** Contenus supprimes chez Yoto, retires d'ici avec leur adresse relevee. */
+  removed: { label: string; copies: number }[];
 }
 
 /**
  * Aligne les contenus connus ici sur la bibliotheque Yoto : chaque contenu du compte y entre, son
- * titre est mis a jour, et les histoires qui avaient perdu leur identifiant le retrouvent. Rien
- * n'est supprime : un contenu disparu chez Yoto est seulement signale.
+ * titre est mis a jour, et les histoires qui avaient perdu leur identifiant le retrouvent. Un
+ * contenu supprime chez Yoto est retire d'ici, adresse relevee comprise : il ne serait plus
+ * propose a la copie. Les puces qui le portent restent dans la liste des copies.
  */
 export function syncContents(remote: { cardId: string; title: string }[]): SyncReport {
-  const report: SyncReport = { contents: remote.length, added: [], retitled: [], relinked: 0, missing: [] };
+  const report: SyncReport = { contents: remote.length, added: [], retitled: [], relinked: 0, removed: [] };
   const insert = db().prepare('INSERT INTO cards (card_id, nickname, title) VALUES (?, ?, ?)');
   const retitle = db().prepare('UPDATE cards SET title = ? WHERE card_id = ?');
 
@@ -252,11 +253,19 @@ export function syncContents(remote: { cardId: string; title: string }[]): SyncR
     }
   })();
 
-  const ids = new Set(remote.map((content) => content.cardId));
-  for (const card of listPool()) {
-    if (ids.has(card.card_id)) continue;
-    // L'identifiant departage deux contenus de meme titre (une histoire publiee deux fois).
-    report.missing.push(card.title ? `« ${card.title} » (${card.card_id})` : card.card_id);
+  // Une bibliotheque vide alors qu'on connait des contenus ressemble plus a un incident chez Yoto
+  // qu'a tout supprime : on ne retire rien sur cette seule foi.
+  if (remote.length > 0) {
+    const ids = new Set(remote.map((content) => content.cardId));
+    db().transaction(() => {
+      for (const card of listPool()) {
+        if (ids.has(card.card_id)) continue;
+        // L'identifiant departage deux contenus de meme titre (une histoire publiee deux fois).
+        const label = card.title ? `« ${card.title} » (${card.card_id})` : card.card_id;
+        report.removed.push({ label, copies: tagsFor(card.card_id).length });
+        unenroll(card.card_id);
+      }
+    })();
   }
   report.relinked = relinkByTitle();
   return report;

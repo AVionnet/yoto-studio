@@ -54,8 +54,8 @@ function syncSection(report: SyncReport | { error: string } | undefined) {
       <h2>Synchroniser avec Yoto</h2>
       <p class="muted">
         Relit ton compte Yoto : les contenus publiés ailleurs (app, autre appareil) entrent ici,
-        les titres changés sont mis à jour, et les histoires retrouvent leurs cartes. Rien n'est
-        supprimé ; un contenu disparu chez Yoto est seulement signalé.
+        les titres changés sont mis à jour, et les histoires retrouvent leurs cartes. Un contenu
+        supprimé chez Yoto est retiré d'ici, avec son adresse relevée.
       </p>
       ${report ? syncResult(report) : ''}
       <form method="post" action="/reglages/synchro" data-guard>
@@ -68,9 +68,10 @@ function syncSection(report: SyncReport | { error: string } | undefined) {
 
 function syncResult(report: SyncReport | { error: string }) {
   if ('error' in report) return html`<p class="alert error">${report.error}</p>`;
-  const changed = report.added.length + report.retitled.length + report.relinked;
+  const changed =
+    report.added.length + report.retitled.length + report.relinked + report.removed.length;
   return html`
-    <div class="alert ${report.missing.length ? 'warn' : 'ok'}" style="display:block">
+    <div class="alert ${report.removed.some((entry) => entry.copies) ? 'warn' : 'ok'}" style="display:block">
       <p><strong>Synchronisé :</strong> ${report.contents} contenu(s) sur ton compte Yoto${changed
         ? ''
         : ', rien n’avait changé'}.</p>
@@ -79,10 +80,13 @@ function syncResult(report: SyncReport | { error: string }) {
         : ''}
       ${report.retitled.length ? html`<p>Titre(s) changé(s) : ${report.retitled.join(' ; ')}.</p>` : ''}
       ${report.relinked ? html`<p>${report.relinked} histoire(s) rattachée(s) à leur contenu.</p>` : ''}
-      ${report.missing.length
+      ${report.removed.length
         ? html`<p>
-            <strong>Introuvable(s) chez Yoto :</strong> ${report.missing.join(', ')}. Supprimé(s)
-            depuis l'app ? Une carte qui les porte ne joue plus.
+            <strong>Supprimé(s) chez Yoto, retiré(s) d'ici :</strong>
+            ${report.removed.map((entry) => entry.label).join(', ')}.
+            ${report.removed.some((entry) => entry.copies)
+              ? html`Les copies qui les portent ne jouent plus : réécris-les avec une autre histoire.`
+              : ''}
           </p>`
         : ''}
     </div>

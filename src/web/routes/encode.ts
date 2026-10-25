@@ -38,7 +38,7 @@ import {
   setProjectCard,
 } from '../../db/projects.ts';
 import { type CardFacts, type Identity, identify } from '../../nfc/identify.ts';
-import { FORMAT_COMMANDS, TAG_CAPACITY, fits, parseYotoUrl, tagBytes } from '../../nfc/ndef.ts';
+import { TAG_CAPACITY, fits, parseYotoUrl, tagBytes } from '../../nfc/ndef.ts';
 import { getCard, listMyCards } from '../../yoto/api.ts';
 import { AuthRequiredError, YotoError } from '../../yoto/errors.ts';
 import { isConnected } from '../../yoto/oauth.ts';
@@ -66,58 +66,6 @@ const playbackRule = html`
   </section>
 `;
 
-/** Ce qu'on fait quand ca bloque : un symptome, une correction. */
-function troubleshooting() {
-  const rows: [string, string][] = [
-    [
-      'Rien ne se passe quand je pose la carte',
-      "Le NFC est-il activé (Réglages Android → Appareils connectés → NFC) ? Fais glisser la carte " +
-        "lentement sur tout le dos du téléphone : la zone NFC est souvent au centre ou près de " +
-        "l'appareil photo. Une coque épaisse ou métallique bloque le signal.",
-    ],
-    [
-      "L'app Yoto ou une page yoto.io s'ouvre au lieu de cette page",
-      "La lecture n'était pas lancée : appuie d'abord sur « Commencer », puis pose la carte. " +
-        'Garde la page au premier plan, écran allumé.',
-    ],
-    [
-      'Le passeur relevé n’est pas la bonne histoire',
-      "Dans l'app Yoto, relie la bonne histoire au passeur, attends la confirmation, puis repose-le " +
-        'ici.',
-    ],
-    [
-      '« Échec de lecture » dans l’app Yoto du téléphone',
-      'Normal pour une copie : seul un lecteur qui a déjà téléchargé l’histoire la joue. Voir ' +
-        '« Pour qu’une copie joue ».',
-    ],
-    [
-      'Le lecteur affiche un panneau rouge avec la copie',
-      'Il n’a pas encore l’histoire en entier. Joue-la avec le passeur jusqu’à ce qu’elle marche ' +
-        'wifi coupé, puis remets la copie.',
-    ],
-  ];
-  return html`
-    <section class="panel">
-      <h2>Si ça bloque</h2>
-      <dl class="faq">
-        ${rows.map(([symptom, fix]) => html`<dt>${symptom}</dt><dd>${fix}</dd>`)}
-      </dl>
-      <h3>Le téléphone refuse d'écrire sur la vierge</h3>
-      <p class="muted">
-        Certaines puces sortent d'usine sans en-tête NDEF, et Android ne sait pas toujours la
-        formater seul. Avec l'application <em>NFC Tools</em> (Autre → Commandes NFC avancées),
-        envoie ces deux commandes une fois sur la carte vierge, puis reviens ici :
-      </p>
-      <pre>${FORMAT_COMMANDS.join('\n')}</pre>
-      <p class="muted">
-        La première déclare un tag NDEF de ${TAG_CAPACITY} octets, la seconde y dépose un message
-        vide. Achète bien la variante <strong>48 octets</strong> : celle de 128 octets se formate
-        autrement.
-      </p>
-    </section>
-  `;
-}
-
 /** Ce qui manque quand Web NFC n'est pas la : le seul cas ou aucun bouton ne peut marcher. */
 const unsupportedAlert = html`
   <div id="indispo" class="alert error" style="display:block" hidden>
@@ -132,12 +80,82 @@ interface Story {
   copies: number;
 }
 
+type Target = { cardId?: string | undefined; title: string; projectId: number };
+
+const linkSteps = (title: string | undefined) => html`
+  <ol class="steps">
+    <li>Dans l'app Yoto, ouvre ${title ? html`<strong>« ${title} »</strong>` : "l'histoire"},
+      choisis « Link to a card » et approche le passeur.</li>
+    <li>Appuie sur « Relever le passeur » et pose-le contre le dos du téléphone.</li>
+  </ol>
+  <button id="relever" type="button">Relever le passeur</button>
+`;
+
+/**
+ * L'etape 1 dit d'ou vient l'adresse a copier, et rien d'autre. Venu d'une histoire, il n'y a
+ * rien a choisir : soit son adresse est deja relevee et on passe a l'ecriture, soit il faut la
+ * relever sur le passeur — et c'est le releve qui fixe l'histoire. La liste ne sert qu'a qui
+ * arrive sans histoire en tete.
+ */
+function storyStep(stories: Story[], target: Target | undefined): Html {
+  const known = target?.cardId ? stories.find((story) => story.cardId === target.cardId) : undefined;
+
+  if (target && known) {
+    return html`
+      <h2>1. L'histoire</h2>
+      <p class="story-title">« ${target.title} »</p>
+      <p class="muted">
+        Son adresse est déjà relevée : pas besoin du passeur${known.copies
+          ? `, ${known.copies} copie(s) déjà faite(s)`
+          : ''}. <a href="/cartes/encoder">Copier une autre histoire</a>
+      </p>
+      <select id="histoire" hidden><option value="${known.cardId}" selected>${target.title}</option></select>
+    `;
+  }
+
+  if (target) {
+    return html`
+      <h2>1. Relever l'histoire sur le passeur</h2>
+      <p class="muted">
+        L'adresse de <strong>« ${target.title} »</strong> n'est pas encore connue. Elle se relève
+        une fois pour toutes ; les copies suivantes s'en passeront.
+      </p>
+      ${linkSteps(target.title)}
+      <select id="histoire" hidden></select>
+    `;
+  }
+
+  if (stories.length === 0) {
+    return html`
+      <h2>1. Relever une histoire sur le passeur</h2>
+      <p class="muted">Aucune adresse relevée pour l'instant.</p>
+      ${linkSteps(undefined)}
+      <select id="histoire" hidden></select>
+    `;
+  }
+
+  return html`
+    <h2>1. Choisir l'histoire</h2>
+    <label for="histoire">Histoire à copier</label>
+    <select id="histoire">
+      ${stories.map(
+        (story, index) => html`<option value="${story.cardId}" ${index === 0 ? 'selected' : ''}>
+          ${story.title}${story.copies ? ` · ${story.copies} copie(s)` : ''}
+        </option>`,
+      )}
+    </select>
+    <details>
+      <summary>Elle n'est pas dans la liste ?</summary>
+      <p class="muted">Seules les histoires dont l'adresse a été relevée y figurent.</p>
+      ${linkSteps(undefined)}
+    </details>
+  `;
+}
+
 function page(
   passeur: string | undefined,
   stories: Story[],
-  // `cardId` absent quand on vient d'un projet dont l'adresse n'est pas (encore) connue : on
-  // nomme alors l'histoire visée et on oriente vers le relevé, sans présélectionner une autre.
-  target: { cardId?: string | undefined; title: string; projectId: number } | undefined,
+  target: Target | undefined,
 ) {
   const back = target ? `/projets/${target.projectId}` : '/cartes';
   return layout(
@@ -160,65 +178,7 @@ function page(
             <div id="atelier" data-passeur="${passeur}" data-target-card="${target?.cardId ?? ''}"
                  data-projet="${target?.projectId ?? ''}" data-capacity="${TAG_CAPACITY}">
               <section class="panel">
-                <h2>1. Choisir l'histoire</h2>
-                ${(() => {
-                  // On vient d'un projet, mais son adresse n'est pas connue (titre ambigu ou jamais
-                  // relevé). On nomme l'histoire et on oriente vers le relevé, sans présélectionner
-                  // une autre histoire qu'on écrirait par erreur.
-                  const unresolved = Boolean(target && !target.cardId);
-                  const targetKnown = target?.cardId
-                    ? stories.some((s) => s.cardId === target.cardId)
-                    : false;
-                  const options: Html[] = [];
-                  if (unresolved) {
-                    options.push(
-                      html`<option value="" selected>— choisis une histoire, ou relève le passeur —</option>`,
-                    );
-                  }
-                  if (target?.cardId && !targetKnown) {
-                    options.push(
-                      html`<option value="${target.cardId}" selected>
-                        ${target.title} — à relever sur le passeur
-                      </option>`,
-                    );
-                  }
-                  stories.forEach((story, i) => {
-                    const chosen = target?.cardId
-                      ? story.cardId === target.cardId
-                      : i === 0 && !target;
-                    options.push(
-                      html`<option value="${story.cardId}" ${chosen ? 'selected' : ''}>
-                        ${story.title}${story.copies ? ` · ${story.copies} copie(s)` : ''}
-                      </option>`,
-                    );
-                  });
-                  return html`
-                    ${unresolved
-                      ? html`<p class="alert warn" style="display:block">
-                          Pour encoder <strong>« ${target!.title} »</strong>, relie-la d'abord au
-                          passeur dans l'app Yoto (« Link to a card »), puis relève-le ci-dessous.
-                          Son adresse rejoindra alors la liste.
-                        </p>`
-                      : ''}
-                    ${options.length > 0
-                      ? html`
-                          <label for="histoire">Histoire à copier</label>
-                          <select id="histoire">${options}</select>
-                          <p class="muted" style="margin-top:var(--space-4)">
-                            Une autre histoire ? Relie-la au passeur dans l'app Yoto (« Link to a
-                            card »), puis relève-le — son adresse rejoindra la liste.
-                          </p>
-                        `
-                      : html`
-                          <select id="histoire" hidden></select>
-                          <p>
-                            Aucune histoire connue encore. Relie une histoire au passeur dans l'app
-                            Yoto (« Link to a card »), puis relève-le ici :
-                          </p>
-                        `}
-                  `;
-                })()}
-                <button id="relever" type="button">Relever le passeur</button>
+                ${storyStep(stories, target)}
                 <p class="status" id="etat-relever"></p>
               </section>
 
@@ -237,7 +197,7 @@ function page(
                   <p class="alert warn" style="display:block">
                     <strong>Une puce neuve doit être formatée une fois avant la première écriture.</strong>
                     Chrome ne sait pas le faire : avec l'app <em>NFC Tools</em>, « Autres » → « Effacer
-                    le tag » (ou les commandes de « Si ça bloque » en bas). Sans ça, l'écriture échoue
+                    le tag ». Sans ça, l'écriture échoue
                     avec « IO error ». Une fois formatée, la puce s'écrit ici sans souci.
                   </p>
                   <button id="ecrire" type="button">Écrire sans lire la carte</button>
@@ -245,13 +205,6 @@ function page(
                 <div id="journal" aria-live="polite"></div>
               </section>
 
-              <div class="muted passeur-ligne">
-                Passeur enregistré : <code>${passeur}</code> ·
-                <form class="inline-link" method="post" action="/cartes/passeur/oublier">
-                  <input type="hidden" name="retour" value="/cartes/encoder">
-                  <button class="link" type="submit">changer de passeur</button>
-                </form>
-              </div>
             </div>
           `
         : html`
@@ -269,7 +222,6 @@ function page(
           `}
 
       ${playbackRule}
-      ${troubleshooting()}
 
       <script src="/static/nfc.js"></script>
       <script src="/static/encoder.js"></script>
@@ -298,7 +250,6 @@ function verifyPage() {
       </div>
 
       ${playbackRule}
-      ${troubleshooting()}
 
       <script src="/static/nfc.js"></script>
       <script src="/static/lecteur.js"></script>

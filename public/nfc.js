@@ -92,7 +92,7 @@
             text: 'Cette puce n’accepte pas d’adresse : elle n’est pas formatée NDEF, ou ce n’est '
               + 'pas le bon modèle.',
             fix: 'Une puce neuve sort parfois d’usine sans en-tête NDEF : formate-la une fois avec '
-              + 'les deux commandes de la section « Si ça bloque ». Vérifie aussi que c’est bien '
+              + 'l’app NFC Tools (« Autres » → « Effacer le tag »). Vérifie aussi que c’est bien '
               + 'une NTAG / Ultralight EV1 de 48 octets.',
           }
         : {
@@ -109,8 +109,8 @@
         ? {
             text: 'L’écriture a échoué : la puce n’est sans doute pas encore formatée NDEF.',
             fix: 'Cause la plus fréquente sur une puce neuve : Chrome ne sait pas la formater seul. '
-              + 'Formate-la UNE fois avec l’app NFC Tools (fonction « Autres » → « Effacer le tag », '
-              + 'ou les deux commandes de « Si ça bloque »), puis reviens écrire ici — ça marchera. '
+              + 'Formate-la UNE fois avec l’app NFC Tools (« Autres » → « Effacer le tag »), puis '
+              + 'reviens écrire ici — ça marchera. '
               + 'Si l’erreur persiste même immobile et formatée, vérifie que la puce a bien bougé, '
               + 'ou qu’elle n’est pas verrouillée (NFC Tools indique « Inscriptible : non »).',
           }
@@ -268,7 +268,7 @@
   var UNREADABLE = {
     text: 'Une carte est détectée, mais Chrome ne lit pas son contenu.',
     fix: 'Si c’est une puce neuve, c’est souvent qu’elle n’est pas encore formatée NDEF : ce '
-      + 'n’est pas grave pour une vierge, l’écriture s’en charge (sinon, voir « Si ça bloque »). '
+      + 'n’est pas grave pour une vierge, l’écriture s’en charge (sinon, formate-la avec NFC Tools). '
       + 'Sinon, elle est mal placée : fais-la glisser lentement sur le dos du téléphone.',
   };
 
