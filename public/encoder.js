@@ -97,6 +97,7 @@
   var story = null;
   var controller = null;
   var reader = null;
+  var running = false;
   var busy = false;
   /* Une carte laissée en place se relit en boucle : on ignore la même puce un instant. */
   var last = { uid: '', at: 0 };
@@ -192,7 +193,12 @@
   function write(uid) {
     var copy = story;
     consigne.textContent = 'Écriture… ne bouge pas la carte.';
-    return reader.write({ records: [{ recordType: 'url', data: copy.url }] })
+    // Web NFC n'autorise qu'une opération à la fois : le scan continu tient la puce, et write()
+    // sur cette même puce échoue (« IO error »). On arrête le scan, on écrit avec un lecteur neuf,
+    // puis on relance le scan pour la carte suivante.
+    if (controller) controller.abort();
+    controller = null;
+    return new NDEFReader().write({ records: [{ recordType: 'url', data: copy.url }] })
       .then(function () { return post('/cartes/encoder', { url: copy.url, uid: uid }); })
       .then(function (body) {
         log(nfc.verdict('ok', '<p><strong>Copie prête :</strong> ' + titleOf(copy)
@@ -206,7 +212,8 @@
         }
         log(nfc.problem('Carte écrite, mais le serveur n’a pas noté la copie.',
           'Elle fonctionne quand même. Recharge la page si ça se répète.', error.message));
-      });
+      })
+      .then(function () { if (running) beginScan(); });
   }
 
   function onCard(uid, message) {
@@ -260,15 +267,7 @@
     });
   }
 
-  function stop() {
-    if (controller) controller.abort();
-    controller = null;
-    startBtn.textContent = 'Commencer';
-    guide();
-  }
-
-  startBtn.addEventListener('click', function () {
-    if (controller) { stop(); return; }
+  function beginScan() {
     reader = new NDEFReader();
     controller = new AbortController();
     var current = controller;
@@ -286,10 +285,25 @@
       guide();
     }, function (error) {
       if (controller === current) controller = null;
+      running = false;
       startBtn.textContent = 'Commencer';
       log(nfc.explained(error, 'scan'));
       guide();
     });
+  }
+
+  function stop() {
+    running = false;
+    if (controller) controller.abort();
+    controller = null;
+    startBtn.textContent = 'Commencer';
+    guide();
+  }
+
+  startBtn.addEventListener('click', function () {
+    if (running) { stop(); return; }
+    running = true;
+    beginScan();
   });
 
   choose(select.value);

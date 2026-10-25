@@ -283,6 +283,15 @@ describe('atelier', () => {
     assert.deepEqual(h.writes, [CARD_URL]);
   });
 
+  it('reprend le scan après une écriture : deux vierges d’affilée sont copiées', async () => {
+    const h = await start({ stories: [JACK], dataset: { targetCard: 'AbC12' } });
+    await h.present(blankReading(BLANK));
+    await h.present(blankReading('04:99:88:77:66:55:90'));
+
+    assert.deepEqual(h.writes, [CARD_URL, CARD_URL]);
+    assert.equal(h.posts.filter((p) => p.url === '/cartes/encoder').length, 2);
+  });
+
   it('ignore une carte laissée en place, qui se relit en boucle', async () => {
     const h = await start({ stories: [JACK], dataset: { targetCard: 'AbC12' } });
     await h.present(blankReading(BLANK));
