@@ -246,7 +246,8 @@
         writeBtn.disabled = false;
         writeBtn.classList.remove('is-busy');
         if (error && error.name && error.name !== 'Error') {
-          log(nfc.explained(error, 'write'));
+          // Presque toujours une puce neuve pas encore formatée : on le dit en grand, d'abord.
+          log(nfc.formatReminder() + nfc.explained(error, 'write'));
         } else {
           log(nfc.problem('Carte écrite, mais le serveur n’a pas noté la copie.',
             'Elle fonctionne quand même. Recharge la page si ça se répète.', error && error.message));

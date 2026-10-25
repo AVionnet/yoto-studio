@@ -330,13 +330,14 @@ describe('atelier — écrire sur une vierge', () => {
     assert.equal(h.el['panneau-ecrire']!.hidden, true);
   });
 
-  it('traduit un échec d’écriture en geste à faire', async () => {
+  it('rappelle de formater la carte avec NFC Tools dès qu’une écriture échoue', async () => {
     const h = await atelier({ stories: [JACK], dataset: { targetCard: 'AbC12' } });
-    h.writeError = nfcError('NotSupportedError');
+    h.writeError = nfcError('NetworkError', 'Failed to write due to an IO error');
     await h.el['ecrire']!.fire('click');
     await h.settle();
 
-    assert.match(h.el['journal']!.innerHTML, /n’est pas formatée NDEF/);
+    assert.match(h.el['journal']!.innerHTML, /Formate d’abord ta carte avec l’app NFC Tools/);
+    assert.match(h.el['journal']!.innerHTML, /Effacer le tag/);
     assert.equal(h.posts.filter((p) => p.url === '/cartes/encoder').length, 0);
   });
 

@@ -149,6 +149,18 @@
     return '<div class="alert ' + kind + '" style="display:block">' + inner + '</div>';
   }
 
+  /* Le rappel à montrer en grand dès qu'une écriture échoue : neuf fois sur dix, la puce n'est
+     pas formatée, et Chrome ne sait pas la formater. */
+  function formatReminder() {
+    return verdict('warn',
+      '<p><strong>➜ Formate d’abord ta carte avec l’app NFC Tools.</strong></p>'
+      + '<p>Une puce neuve doit être formatée une seule fois avant de pouvoir être écrite ; Chrome '
+      + 'ne sait pas le faire. Dans <em>NFC Tools</em> : onglet <strong>« Autres »</strong> → '
+      + '<strong>« Effacer le tag »</strong>, pose la carte, puis reviens écrire ici.</p>'
+      + '<p class="detail">Si NFC Tools affiche « Inscriptible : non », la puce est verrouillée ou '
+      + 'd’un mauvais type : il en faut une autre.</p>');
+  }
+
   /* Une erreur, toujours accompagnée de la façon de la corriger. */
   function problem(text, fix, detail) {
     return verdict('error',
@@ -276,6 +288,7 @@
     explained: explained,
     notes: notes,
     chipWarning: chipWarning,
+    formatReminder: formatReminder,
     story: story,
     identify: identify,
     scanOnce: scanOnce,
