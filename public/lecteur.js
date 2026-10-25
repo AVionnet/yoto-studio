@@ -34,13 +34,18 @@
   }
 
   function chipTable(uid, records, url) {
-    var rows = '<dt>puce</dt><dd>' + esc(uid || '(uid non exposé par le téléphone)') + '</dd>'
-      + '<dt>contenu</dt><dd>' + (records.length
-        ? records.map(function (r) { return esc(r.type) + ' : ' + esc(r.text); }).join('<br>')
-        : '(aucun enregistrement)') + '</dd>';
+    var found = url ? nfc.parseYoto(url) : null;
+    var rows = '';
+    // L'identifiant du contenu porté par la carte : c'est lui qui dit quelle histoire elle joue.
+    if (found) {
+      rows += '<dt>identifiant</dt><dd><strong><code>' + esc(found.cardId) + '</code></strong></dd>';
+    }
+    rows += '<dt>puce</dt><dd><code>' + esc(uid || '(uid non exposé par le téléphone)') + '</code></dd>';
+    rows += '<dt>contenu brut</dt><dd>' + (records.length
+      ? records.map(function (r) { return esc(r.type) + ' : ' + esc(r.text); }).join('<br>')
+      : '(aucun enregistrement)') + '</dd>';
     if (url) {
-      var bytes = nfc.tagBytes(url);
-      rows += '<dt>occupation</dt><dd>' + bytes + ' / ' + capacity + ' octets</dd>';
+      rows += '<dt>occupation</dt><dd>' + nfc.tagBytes(url) + ' / ' + capacity + ' octets</dd>';
     }
     return '<dl class="kv">' + rows + '</dl>';
   }
