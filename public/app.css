@@ -638,6 +638,13 @@ main.centered .panel button { width: 100%; }
 .story-meta { margin: var(--space-1) 0 0; font-size: 13.5px; color: var(--neutral-700); }
 .story-chapters { margin: var(--space-3) 0 0; padding-left: 22px; font-size: 14.5px; }
 
+/* L'atelier : une consigne qui change à chaque carte posée, puis le journal, le plus récent en haut. */
+.consigne { margin: var(--space-4) 0; font-size: 17px; line-height: 1.45; }
+#journal { margin-top: var(--space-4); }
+.passeur-ligne { margin: 0 0 var(--space-6); font-size: 14px; }
+.inline-link { display: inline; }
+.inline-link button.link { padding: 0; font-size: inherit; }
+
 details { margin-top: var(--space-4); }
 summary { cursor: pointer; font-size: 14px; color: var(--neutral-700); margin-bottom: var(--space-2); }
 

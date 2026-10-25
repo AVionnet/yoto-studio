@@ -21,6 +21,8 @@ export interface CardFacts {
   remote?: { title: string; chapters: string[] } | undefined;
   project?: { id: number; title: string } | undefined;
   pool?: { nickname: string; ndefUrl: string | null } | undefined;
+  /** Vrai si la puce lue est le passeur enregistre. */
+  passeur?: boolean | undefined;
   /** Ce que le registre dit de cette puce precise, si son uid est connu. */
   chip?: { cardId: string; writtenAt: string; title?: string | undefined } | undefined;
 }
@@ -40,6 +42,7 @@ export interface Identity {
   library: LibraryState;
   project: { id: number; title: string } | null;
   nickname: string | null;
+  passeur: boolean;
   chip: CardFacts['chip'] | null;
   notes: Note[];
 }
@@ -105,7 +108,8 @@ export function identify(facts: CardFacts): Identity {
     });
   }
 
-  if (facts.chip && facts.chip.cardId !== facts.cardId) {
+  // Le passeur change d'histoire a chaque liaison : c'est son role, pas une anomalie.
+  if (!facts.passeur && facts.chip && facts.chip.cardId !== facts.cardId) {
     const was = facts.chip.title ? `« ${facts.chip.title} » (${facts.chip.cardId})` : facts.chip.cardId;
     notes.push({
       kind: 'warn',
@@ -123,6 +127,7 @@ export function identify(facts: CardFacts): Identity {
     library: facts.library,
     project: facts.project ?? null,
     nickname: facts.pool?.nickname ?? null,
+    passeur: facts.passeur ?? false,
     chip: facts.chip ?? null,
     notes,
   };

@@ -58,6 +58,13 @@ describe('identify', () => {
     assert.deepEqual(identify(facts({ pool: { nickname: 'Jack', ndefUrl: URL } })).notes, []);
   });
 
+  it('ne reproche rien au passeur, qui change d’histoire à chaque liaison', () => {
+    const notes = identify(
+      facts({ passeur: true, chip: { cardId: 'ZZZ99', writtenAt: '2026-10-01 10:00:00', title: 'Autre' } }),
+    ).notes;
+    assert.deepEqual(notes, []);
+  });
+
   it('signale une puce que le registre associe à une autre histoire', () => {
     const notes = identify(
       facts({ chip: { cardId: 'ZZZ99', writtenAt: '2026-10-01 10:00:00', title: 'Boucle d’or' } }),

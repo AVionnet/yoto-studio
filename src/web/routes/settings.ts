@@ -7,7 +7,7 @@
 import type { FastifyInstance } from 'fastify';
 
 import { hasOfflineAccess } from '../../config.ts';
-import { listPool, setTrackCount, tagCounts } from '../../db/cards.ts';
+import { getPasseur, listPool, setTrackCount, tagCounts } from '../../db/cards.ts';
 import { getCard, listMyCards } from '../../yoto/api.ts';
 import { AuthRequiredError } from '../../yoto/errors.ts';
 import { isConnected } from '../../yoto/oauth.ts';
@@ -111,6 +111,7 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
     const enrolled = new Set(pool.map((card) => card.card_id));
 
     const encoded = tagCounts();
+    const passeur = getPasseur();
 
     const poolRows = listPool().map((card) => {
       const source = remote.find((entry) => entry.cardId === card.card_id);
@@ -216,6 +217,15 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
             <p class="muted">
               Les deux demandent Web NFC : Chrome sur Android, en HTTPS.
             </p>
+            ${passeur
+              ? html`<div class="muted passeur-ligne">
+                  Passeur enregistré : <code>${passeur}</code> ·
+                  <form class="inline-link" method="post" action="/cartes/passeur/oublier">
+                    <input type="hidden" name="retour" value="/reglages">
+                    <button class="link" type="submit">oublier ce passeur</button>
+                  </form>
+                </div>`
+              : html`<p class="muted">Aucun passeur enregistré : la page d'encodage le demandera.</p>`}
           </section>
         `,
       ),

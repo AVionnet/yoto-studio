@@ -1,5 +1,5 @@
 /** Le pool : les cartes physiques enrolees une fois pour toutes. */
-import { db } from './index.ts';
+import { db, deleteSetting, getSetting, setSetting } from './index.ts';
 
 export interface PoolCard {
   id: number;
@@ -54,6 +54,25 @@ export function setNdefUrl(cardId: string, ndefUrl: string): void {
     .prepare(`UPDATE cards SET ndef_url = ?, updated_at = datetime('now') WHERE card_id = ?`)
     .run(ndefUrl, cardId);
 }
+
+/**
+ * Memorise l'adresse relevee pour un contenu, en l'enrolant au besoin. Un surnom choisi a la main
+ * — « la bleue » — ne se fait pas ecraser : on n'enrole que ce qui manque au pool, et le releve,
+ * lui, fait toujours foi pour l'adresse.
+ */
+export function saveAddress(cardId: string, nickname: string, ndefUrl: string): void {
+  if (!findByCardId(cardId)) enroll(cardId, nickname, ndefUrl);
+  setNdefUrl(cardId, ndefUrl);
+}
+
+/**
+ * Le passeur : la carte MYO officielle qu'on relie a chaque histoire dans l'app Yoto, puis qu'on
+ * releve ici. On n'en garde que l'uid, qui suffit a le reconnaitre parmi les vierges.
+ */
+const PASSEUR = 'passeur_uid';
+export const getPasseur = (): string | undefined => getSetting(PASSEUR);
+export const setPasseur = (uid: string): void => setSetting(PASSEUR, uid);
+export const forgetPasseur = (): void => deleteSetting(PASSEUR);
 
 /**
  * Note une puce vierge qui vient d'etre encodee. La cle est l'uid : une puce ne porte qu'un

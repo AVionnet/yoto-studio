@@ -80,11 +80,16 @@
     nfc.identify(url, uid).then(function (identity) {
       if (last.uid !== uid) return; // une autre carte a été posée entretemps
       var bad = identity.notes.some(function (note) { return note.kind === 'error'; });
-      var head = bad
-        ? ''
-        : nfc.verdict('ok', '<p><strong>Carte valide.</strong> Elle joue '
-            + (identity.title ? '« ' + esc(identity.title) + ' »' : 'le contenu ' + esc(found.cardId))
-            + '.</p>');
+      var name = identity.title ? '« ' + esc(identity.title) + ' »' : 'le contenu ' + esc(found.cardId);
+      var head = '';
+      if (identity.passeur) {
+        head = nfc.verdict('ok', '<p><strong>C’est ton passeur.</strong> Il porte ' + name + '.</p>');
+      } else if (!bad) {
+        // Une copie porte la bonne adresse, mais ne joue que sur un lecteur qui a l'histoire.
+        head = nfc.verdict('ok', '<p><strong>Adresse correcte :</strong> ' + name + '.</p>'
+          + '<p>Elle jouera sur un lecteur qui a déjà téléchargé l’histoire — pas dans l’app '
+          + 'Yoto du téléphone.</p>') + nfc.chipWarning(uid);
+      }
       reportEl.innerHTML = head + nfc.story(identity) + nfc.notes(identity.notes) + extra
         + chipTable(uid, records, url);
     }).catch(function (error) {

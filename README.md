@@ -32,26 +32,29 @@ jamais toucher au tag.
 
 ## Encoder des cartes vierges
 
-Une carte Yoto est un MIFARE Ultralight EV1 de 48 octets : exactement les puces vierges vendues par
-lots. Il n'y manque que l'adresse — et l'adresse ne s'invente pas, puisque le token est signé par
-Yoto.
+Une carte Yoto est un MIFARE Ultralight EV1 de 48 octets portant `https://yoto.io/<cardId>?<token>`.
+Les puces vierges vendues par lots sont la même puce — il ne manque que l'adresse, et l'adresse ne
+s'invente pas : le token est signé par Yoto, et seule l'app Yoto l'écrit, sur une carte MYO qui sert
+de **passeur**.
 
-Elle se relève. Lier un contenu à une carte MYO depuis l'app Yoto y écrit une adresse neuve : une
-seule carte officielle suffit donc, comme **passeur**.
+Le passeur s'enregistre **une seule fois** (par son uid) depuis `/cartes/encoder`. Ensuite l'atelier
+reconnaît seul ce qu'on pose sur le téléphone : le passeur (on relève et on mémorise son adresse),
+une vierge (on y copie l'histoire choisie), une copie déjà faite (rien à faire), une carte qui porte
+autre chose (on confirme avant d'écraser). On change de passeur par « changer de passeur » (Réglages
+ou page d'encodage).
 
 1. Publier le projet ici : Yoto crée le contenu et son `cardId`.
 2. Dans l'app Yoto, « Link to a card » sur le passeur.
-3. `/cartes/encoder` relève le passeur, affiche l'histoire qu'il porte, recopie son adresse sur la
-   vierge, et relit pour vérifier.
-4. Le passeur redevient libre pour le contenu suivant ; la vierge garde le sien pour de bon.
+3. `/cartes/encoder` : poser le passeur (son adresse est gardée), puis poser les vierges.
 
-`/cartes/verifier` lit n'importe quelle carte et dit quelle histoire elle joue ; chaque erreur
-(NFC refusé, puce non formatée, passeur réécrit à la place de la vierge…) s'affiche avec sa
-correction.
+`/cartes/verifier` lit n'importe quelle carte et dit quelle histoire elle porte ; chaque erreur
+(NFC refusé, puce non formatée, mauvais modèle de puce…) s'affiche avec sa correction.
 
-La vierge rejoint le pool avec son adresse : elle se republie ensuite par l'API, sans NFC ni app.
-La même adresse recopiée sur deux puces donne deux jumelles, qui jouent la même chose — de quoi
-remplacer une carte perdue.
+**Limite d'une copie.** Yoto ne connaît pas l'uid d'une puce vierge : le serveur la refuse, et l'app
+du téléphone affiche « Échec de lecture ». Une copie ne joue que sur un **lecteur** qui a déjà
+téléchargé l'histoire en entier (via le passeur), et il faut recommencer après chaque republication.
+Pour une carte reconnue partout, mieux vaut une carte MYO officielle : l'appli la reprogramme à
+l'infini par l'API, sans NFC ni app.
 
 Web NFC oblige : **Chrome sur Android, en HTTPS**. Prendre la variante **48 octets** (MF0UL11) ;
 celle de 128 octets se formate autrement. Une puce sortie d'usine sans en-tête NDEF se formate une

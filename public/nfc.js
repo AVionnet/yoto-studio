@@ -162,6 +162,16 @@
     }).join('');
   }
 
+  /* Une Ultralight EV1 de NXP — la puce des cartes Yoto — a un uid de 7 octets qui commence par
+     04. Un autre uid trahit un autre modèle, que le lecteur risque de refuser. */
+  function chipWarning(uid) {
+    if (!uid || /^04(:[0-9a-f]{2}){6}$/i.test(uid)) return '';
+    return verdict('warn', '<p><strong>Ce n’est sans doute pas une Ultralight EV1 de NXP</strong> '
+      + '(numéro <code>' + esc(uid) + '</code>) : le lecteur Yoto risque de la refuser.</p>'
+      + '<p><strong>Comment corriger :</strong> utilise des puces « MIFARE Ultralight EV1, 48 '
+      + 'octets » ; garde celle-ci pour un essai.</p>');
+  }
+
   /* L'histoire que joue une carte : son titre d'abord, l'identifiant ensuite. */
   var MAX_CHAPTERS = 8;
   function story(identity) {
@@ -256,6 +266,7 @@
     problem: problem,
     explained: explained,
     notes: notes,
+    chipWarning: chipWarning,
     story: story,
     identify: identify,
     scanOnce: scanOnce,
