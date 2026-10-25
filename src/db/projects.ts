@@ -61,6 +61,13 @@ export function getProject(id: number): Project | undefined {
   return db().prepare('SELECT * FROM projects WHERE id = ?').get(id) as Project | undefined;
 }
 
+/** L'histoire qui porte ce titre, quand un contenu Yoto n'est rattache a aucune. */
+export function findProjectByTitle(title: string): Project | undefined {
+  return db()
+    .prepare('SELECT * FROM projects WHERE title = ? ORDER BY id DESC LIMIT 1')
+    .get(title) as Project | undefined;
+}
+
 /** Le projet le plus recent qui publie sur ce contenu. */
 export function findProjectByCard(cardId: string): Project | undefined {
   return db()

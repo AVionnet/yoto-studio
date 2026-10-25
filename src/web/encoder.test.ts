@@ -92,7 +92,7 @@ const nfcError = (name: string, message = 'refusé'): Error =>
 
 const IDS = [
   'indispo', 'enregistrer', 'etat', 'resultat', 'atelier', 'histoire', 'relever', 'etat-relever',
-  'panneau-ecrire', 'ecrire', 'etat-ecrire', 'consigne', 'journal', 'lecteur', 'scanner', 'rapport',
+  'panneau-ecrire', 'changer', 'ecrire', 'etat-ecrire', 'consigne', 'journal', 'lecteur', 'scanner', 'rapport',
 ];
 
 interface Harness {
@@ -311,7 +311,7 @@ describe('atelier — écrire sur une vierge', () => {
 
     assert.deepEqual(h.writes, [CARD_URL]);
     assert.deepEqual(h.posts.at(-1), { url: '/cartes/encoder', body: { url: CARD_URL, uid: '' } });
-    assert.match(h.el['journal']!.innerHTML, /Copie prête :<\/strong> « Jack et le haricot magique »/);
+    assert.match(h.el['journal']!.innerHTML, /Copie prête :<\/strong> la carte porte « Jack et le haricot magique »/);
   });
 
   it('copie plusieurs vierges, un appui par carte', async () => {
@@ -349,6 +349,105 @@ describe('atelier — écrire sur une vierge', () => {
     await h.settle();
 
     assert.deepEqual(h.writes, [CARD_URL]);
+  });
+});
+
+describe('atelier — lire puis écrire une carte', () => {
+  const OTHER_URL = 'https://yoto.io/XyZ98?aaaaBBBBccccDDDD';
+  const jack = () => atelier({ stories: [JACK], dataset: { targetCard: 'AbC12' } });
+
+  it('change l’histoire d’une carte déjà écrite, et note son uid et ce qu’elle portait', async () => {
+    const h = await jack();
+    h.replies['/cartes/encoder'] = {
+      cardId: 'AbC12', tags: 2, replaced: 'Les trois petits cochons', tag: { id: 7, name: 'la rouge' },
+    };
+    await h.el['changer']!.fire('click');
+    await h.present(reading(OTHER_URL, BLANK));
+
+    assert.deepEqual(h.writes, [CARD_URL]);
+    assert.deepEqual(h.posts.at(-1), {
+      url: '/cartes/encoder',
+      body: { url: CARD_URL, uid: BLANK, previous: OTHER_URL },
+    });
+    assert.match(
+      h.el['journal']!.innerHTML,
+      /Carte réécrite :<\/strong> « la rouge » passe de « Les trois petits cochons » à « Jack/,
+    );
+    assert.match(h.el['journal']!.innerHTML, /data-tag="7"[\s\S]*value="la rouge"/, 'on peut la renommer');
+  });
+
+  it('écrit une puce formatée vide sans rien demander', async () => {
+    const h = await jack();
+    await h.el['changer']!.fire('click');
+    await h.present(emptyReading(BLANK));
+
+    assert.deepEqual(h.writes, [CARD_URL]);
+    assert.deepEqual(h.posts.at(-1)!.body, { url: CARD_URL, uid: BLANK });
+  });
+
+  it('n’écrit rien sur une carte qui porte déjà l’histoire', async () => {
+    const h = await jack();
+    await h.el['changer']!.fire('click');
+    await h.present(reading(CARD_URL, BLANK));
+
+    assert.equal(h.writes.length, 0);
+    assert.match(h.el['journal']!.innerHTML, /Rien à écrire/);
+  });
+
+  it('relève le passeur posé au lieu de l’écraser, puis écrit la carte suivante', async () => {
+    const h = await atelier();
+    await h.el['relever']!.fire('click');
+    await h.present(reading(OTHER_URL, PASSEUR)); // une histoire quelconque, pour armer l'écriture
+    h.posts.length = 0;
+
+    await h.el['changer']!.fire('click');
+    await h.present(reading(CARD_URL, PASSEUR));
+    assert.equal(h.writes.length, 0, 'le passeur ne doit jamais être écrit');
+    assert.deepEqual(h.posts[0], { url: '/cartes/releve', body: { url: CARD_URL, uid: PASSEUR } });
+
+    await h.present(blankReading(BLANK));
+    assert.deepEqual(h.writes, [CARD_URL]);
+  });
+
+  it('demande de reposer une carte qui porte autre chose avant de l’écraser', async () => {
+    const h = await jack();
+    const foreign = reading('https://example.com/menu', BLANK);
+    await h.el['changer']!.fire('click');
+    await h.present(foreign);
+    assert.equal(h.writes.length, 0);
+    assert.match(h.el['journal']!.innerHTML, /porte autre chose qu’une histoire Yoto/);
+
+    await h.el['changer']!.fire('click');
+    await h.present(foreign);
+    assert.deepEqual(h.writes, [CARD_URL]);
+  });
+
+  it('tente l’écriture sur une puce illisible, et rappelle le formatage si elle échoue', async () => {
+    const h = await jack();
+    h.writeError = nfcError('NetworkError', 'Failed to write due to an IO error');
+    await h.el['changer']!.fire('click');
+    await h.present('illisible');
+
+    assert.match(h.el['journal']!.innerHTML, /Formate d’abord ta carte/);
+  });
+
+  it('ne parle pas de formatage quand une carte lue échoue à l’écriture', async () => {
+    const h = await jack();
+    h.writeError = nfcError('NetworkError', 'Failed to write due to an IO error');
+    await h.el['changer']!.fire('click');
+    await h.present(reading(OTHER_URL, BLANK));
+
+    assert.doesNotMatch(h.el['journal']!.innerHTML, /Formate d’abord ta carte/);
+    assert.match(h.el['journal']!.innerHTML, /NetworkError/);
+  });
+
+  it('envoie le projet ouvert au relevé, et ne prévient plus quand le serveur l’y a rattaché', async () => {
+    const h = await atelier({ dataset: { projet: '1' } });
+    await h.el['relever']!.fire('click');
+    await h.present(reading(CARD_URL, PASSEUR));
+
+    assert.deepEqual(h.posts[0]!.body, { url: CARD_URL, uid: PASSEUR, projet: '1' });
+    assert.doesNotMatch(h.el['journal']!.innerHTML, /pas l’histoire du projet ouvert/);
   });
 });
 

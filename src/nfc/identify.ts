@@ -23,6 +23,8 @@ export interface CardFacts {
   pool?: { nickname: string; ndefUrl: string | null } | undefined;
   /** Vrai si la puce lue est le passeur enregistre. */
   passeur?: boolean | undefined;
+  /** Le nom donne a cette carte : une copie nommee, ou la carte MYO liee a ce contenu. */
+  cardName?: string | null | undefined;
   /** Ce que le registre dit de cette puce precise, si son uid est connu. */
   chip?: { cardId: string; writtenAt: string; title?: string | undefined } | undefined;
 }
@@ -43,6 +45,7 @@ export interface Identity {
   project: { id: number; title: string } | null;
   nickname: string | null;
   passeur: boolean;
+  cardName: string | null;
   chip: CardFacts['chip'] | null;
   notes: Note[];
 }
@@ -116,7 +119,7 @@ export function identify(facts: CardFacts): Identity {
       text: `Nos registres disent que cette puce portait ${was}, encodée le ${facts.chip.writtenAt}.`,
       fix:
         'Elle a été réécrite ailleurs (app Yoto, NFC Tools…) ou c’est la carte passeur. Si elle ' +
-        'doit jouer l’autre histoire, réencode-la depuis « Encoder une carte vierge ».',
+        'doit jouer l’autre histoire, réencode-la depuis « Fabriquer une carte ».',
     });
   }
 
@@ -128,6 +131,7 @@ export function identify(facts: CardFacts): Identity {
     project: facts.project ?? null,
     nickname: facts.pool?.nickname ?? null,
     passeur: facts.passeur ?? false,
+    cardName: facts.cardName ?? null,
     chip: facts.chip ?? null,
     notes,
   };

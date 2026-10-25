@@ -9,7 +9,7 @@ import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { config } from '../config.ts';
-import { enroll } from '../db/cards.ts';
+import { enroll, rememberTitles } from '../db/cards.ts';
 import {
   addTrack,
   getProject,
@@ -134,6 +134,7 @@ async function runBuild(job: Job): Promise<unknown> {
     // L'ordre compte : projects.card_id reference cards.card_id, donc la carte doit exister
     // dans le pool avant qu'un projet puisse la designer.
     if (isNew) enroll(card.cardId, payload.title);
+    rememberTitles([{ cardId: card.cardId, title: payload.title }]);
     setProjectCard(payload.projectId, card.cardId);
   }
 

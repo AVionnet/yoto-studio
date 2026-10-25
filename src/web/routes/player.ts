@@ -89,7 +89,7 @@ export async function playerRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Params: { id: string } }>('/projets/:id/ecouter', async (request, reply) => {
     const projectId = Number(request.params.id);
     const project = getProject(projectId);
-    if (!project) return reply.status(404).send('Projet introuvable.');
+    if (!project) return reply.status(404).send('Histoire introuvable.');
 
     const tracks = listTracks(projectId);
     const urls = await sources(projectId, tracks, project.card_id);
@@ -115,7 +115,7 @@ export async function playerRoutes(app: FastifyInstance): Promise<void> {
 
     return reply.type('text/html').send(
       layout(
-        { title: project.title, nav: 'cards' },
+        { title: project.title, nav: 'stories' },
         html`
           <a class="back" href="/projets/${projectId}">← Retour au projet</a>
           <h1>${project.title}</h1>
@@ -137,7 +137,7 @@ export async function playerRoutes(app: FastifyInstance): Promise<void> {
                 lecteur.
               </p>
               ${tracks.length === 0
-                ? html`<p class="alert error">Ce projet n'a encore aucune piste.</p>`
+                ? html`<p class="alert error">Cette histoire n'a encore aucun chapitre.</p>`
                 : html`<ul class="pl-list">${rows}</ul>`}
             </div>
           </div>

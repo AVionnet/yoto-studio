@@ -47,6 +47,10 @@ ou page d'encodage).
 2. Dans l'app Yoto, « Link to a card » sur le passeur.
 3. `/cartes/encoder` : poser le passeur (son adresse est gardée), puis poser les vierges.
 
+Relevé depuis la page d'un projet, le passeur rattache son adresse au projet quand les titres
+concordent : ensuite, « Écrire cette histoire sur une carte » suffit, sans repasser par le passeur.
+Une carte déjà formatée est lue avant d'être écrite, et change d'histoire en un seul geste.
+
 `/cartes/verifier` lit n'importe quelle carte et dit quelle histoire elle porte ; chaque erreur
 (NFC refusé, puce non formatée, mauvais modèle de puce…) s'affiche avec sa correction.
 

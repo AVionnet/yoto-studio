@@ -101,7 +101,7 @@ function labelPage(
   const base = `/projets/${project.id}/etiquette`;
 
   return layout(
-    { title: `Étiquette — ${project.title}`, nav: 'cards' },
+    { title: `Étiquette — ${project.title}`, nav: 'stories' },
     html`
       <h1>Étiquette de « ${project.title} »</h1>
       <p class="muted">
@@ -130,7 +130,7 @@ function labelPage(
               <p class="alert error">
                 ${failure
                   ? `L'image de couverture n'a pas pu être lue : ${failure}`
-                  : "Cette carte n'a pas encore de couverture, et l'étiquette n'est que ça : l'image."}
+                  : "Cette histoire n'a pas encore de couverture, et l'étiquette n'est que ça : l'image."}
               </p>
               <p style="margin:0">
                 <a class="button" href="/projets/${project.id}/couverture">
@@ -140,7 +140,7 @@ function labelPage(
             </section>
           `}
 
-      <p><a href="/projets/${project.id}">Retour à la carte</a></p>
+      <p><a href="/projets/${project.id}">Retour à l’histoire</a></p>
     `,
   );
 }
@@ -157,7 +157,7 @@ function sheetPage(
   const pickerBase = `/cartes/etiquettes?${selected.map((id) => `ids=${id}`).join('&')}&sel=1`;
 
   return layout(
-    { title: 'Planche d’étiquettes', nav: 'cards' },
+    { title: 'Planche d’étiquettes', nav: 'stories' },
     html`
       <h1>Planche d'étiquettes</h1>
       <p class="muted">
@@ -168,13 +168,13 @@ function sheetPage(
       ${projects.length === 0
         ? html`
             <section class="panel">
-              <p class="alert error">Aucune carte n'a encore de couverture à coller.</p>
-              <p style="margin:0"><a class="button" href="/">Voir les cartes</a></p>
+              <p class="alert error">Aucune histoire n'a encore de couverture à coller.</p>
+              <p style="margin:0"><a class="button" href="/">Voir les histoires</a></p>
             </section>
           `
         : html`
             <section class="panel">
-              <h2>Quelles cartes ?</h2>
+              <h2>Quelles histoires ?</h2>
               <form method="get" action="/cartes/etiquettes">
                 <input type="hidden" name="sel" value="1">
                 <input type="hidden" name="cadrage" value="${framing}">
@@ -234,7 +234,7 @@ export async function labelRoutes(app: FastifyInstance): Promise<void> {
     '/projets/:id/etiquette',
     async (request, reply) => {
       const project = getProject(Number(request.params.id));
-      if (!project) return reply.status(404).send('Projet introuvable.');
+      if (!project) return reply.status(404).send('Histoire introuvable.');
 
       let cover: Buffer | undefined;
       let failure: string | undefined;
@@ -256,7 +256,7 @@ export async function labelRoutes(app: FastifyInstance): Promise<void> {
     '/projets/:id/etiquette.png',
     async (request, reply) => {
       const project = getProject(Number(request.params.id));
-      if (!project) return reply.status(404).send('Projet introuvable.');
+      if (!project) return reply.status(404).send('Histoire introuvable.');
 
       let cover: Buffer | undefined;
       try {
@@ -264,7 +264,7 @@ export async function labelRoutes(app: FastifyInstance): Promise<void> {
       } catch (error) {
         return reply.status(502).send(error instanceof Error ? error.message : String(error));
       }
-      if (!cover) return reply.status(404).send('Cette carte n’a pas de couverture.');
+      if (!cover) return reply.status(404).send('Cette histoire n’a pas de couverture.');
 
       const png = await renderLabel(cover, framingOf(request.query.cadrage));
       return reply
@@ -300,7 +300,7 @@ export async function labelRoutes(app: FastifyInstance): Promise<void> {
         page * SHEET_CAPACITY,
         page * SHEET_CAPACITY + SHEET_CAPACITY,
       );
-      if (ids.length === 0) return reply.status(400).send('Aucune carte sélectionnée.');
+      if (ids.length === 0) return reply.status(400).send('Aucune histoire sélectionnée.');
 
       const framing = framingOf(request.query.cadrage);
       const labels: Buffer[] = [];

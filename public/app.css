@@ -357,7 +357,7 @@ button.is-busy::before {
 .chip {
   font-size: 12.5px; font-weight: 700;
   padding: 4px 12px; border-radius: var(--radius-pill);
-  background: var(--fill-ink); color: var(--neutral-100);
+  background: var(--fill-ink, var(--neutral-900)); color: var(--neutral-100);
 }
 .chip.pale { background: var(--neutral-100); color: var(--neutral-800); }
 .chip.warn { background: var(--coral); color: var(--coral-ink); margin-left: 6px; }
@@ -598,6 +598,10 @@ main.centered .panel button { width: 100%; }
   .stack td.act::before { content: none; }
   .stack td.act form.inline { flex-wrap: wrap; justify-content: flex-start; width: 100%; }
   .stack td.act form.inline input { width: 100%; }
+  /* Une cellule avec intitulé qui porte un formulaire (renommer une carte) : le champ prend la
+     place qui reste au lieu de pousser le bouton hors de l'écran. */
+  .stack td:has(> form.inline) { grid-template-columns: 7.5em minmax(0, 1fr); }
+  .stack td > form.inline input { flex: 1 1 0; width: auto; }
 }
 
 /* ── Encodage NFC ──────────────────────────────────────────────────────── */

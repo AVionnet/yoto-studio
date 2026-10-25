@@ -25,17 +25,18 @@ import {
   getPasseur,
   listPool,
   recordTag,
+  rememberTitles,
   saveAddress,
   setPasseur,
   tagsFor,
 } from '../../db/cards.ts';
-import { findProjectByCard, getProject } from '../../db/projects.ts';
+import { findProjectByCard, getProject, setProjectCard } from '../../db/projects.ts';
 import { type CardFacts, type Identity, identify } from '../../nfc/identify.ts';
 import { FORMAT_COMMANDS, TAG_CAPACITY, fits, parseYotoUrl, tagBytes } from '../../nfc/ndef.ts';
 import { getCard, listMyCards } from '../../yoto/api.ts';
 import { AuthRequiredError, YotoError } from '../../yoto/errors.ts';
 import { isConnected } from '../../yoto/oauth.ts';
-import { html, layout } from '../html.ts';
+import { type Html, html, layout } from '../html.ts';
 import { requireAuth } from './auth.ts';
 
 /** Un surnom par defaut plutot qu'un champ vide : la carte vient toujours de quelque part. */
@@ -128,19 +129,22 @@ interface Story {
 function page(
   passeur: string | undefined,
   stories: Story[],
-  target: { cardId: string; title: string; projectId: number } | undefined,
+  // `cardId` absent quand on vient d'un projet dont l'adresse n'est pas (encore) connue : on
+  // nomme alors l'histoire visée et on oriente vers le relevé, sans présélectionner une autre.
+  target: { cardId?: string | undefined; title: string; projectId: number } | undefined,
 ) {
-  const back = target ? `/projets/${target.projectId}` : '/reglages';
+  const back = target ? `/projets/${target.projectId}` : '/cartes';
   return layout(
-    { title: 'Encoder une carte', nav: 'settings' },
+    { title: 'Fabriquer une carte', nav: 'cards' },
     html`
       <p><a class="back" href="${back}">← Retour</a></p>
-      <h1>Encoder une carte vierge</h1>
+      <h1>Fabriquer une carte</h1>
 
       <p class="muted">
-        Une copie d'une histoire sur une puce du commerce « NFC Ultralight EV1 48 octets ». L'adresse
-        s'obtient avec ta carte MYO officielle, le <strong>passeur</strong>, que l'app Yoto relie à
-        l'histoire. <a href="/cartes/verifier">Lire une carte</a> pour vérifier ce qu'une puce porte.
+        Mettre une histoire sur une puce du commerce « NFC Ultralight EV1 48 octets » — neuve, ou
+        une copie qui change d'histoire. L'adresse de l'histoire s'obtient avec ta carte MYO
+        officielle, le <strong>passeur</strong>, que l'app Yoto relie à l'histoire.
+        <a href="/cartes/verifier">Lire une carte</a> pour vérifier ce qu'une puce porte.
       </p>
 
       ${unsupportedAlert}
@@ -151,49 +155,87 @@ function page(
                  data-projet="${target?.projectId ?? ''}" data-capacity="${TAG_CAPACITY}">
               <section class="panel">
                 <h2>1. Choisir l'histoire</h2>
-                ${stories.length > 0
-                  ? html`
-                      <label for="histoire">Histoire à copier</label>
-                      <select id="histoire">
-                        ${stories.map((story, i) => {
-                          const chosen = target ? story.cardId === target.cardId : i === 0;
-                          return html`<option value="${story.cardId}" ${chosen ? 'selected' : ''}>
-                            ${story.title}${story.copies ? ` · ${story.copies} copie(s)` : ''}
-                          </option>`;
-                        })}
-                      </select>
-                      <details>
-                        <summary>Une autre histoire ? (relever le passeur)</summary>
-                        <p class="muted">
-                          Relie d'abord l'histoire au passeur dans l'app Yoto, puis relève-le — son
-                          adresse rejoindra la liste.
-                        </p>
-                        <button id="relever" type="button">Relever le passeur</button>
-                        <p class="status" id="etat-relever"></p>
-                      </details>
-                    `
-                  : html`
-                      <select id="histoire" hidden></select>
-                      <p>
-                        Aucune histoire connue encore. Relie une histoire au passeur dans l'app Yoto
-                        (« Link to a card »), puis relève-le ici :
-                      </p>
-                      <button id="relever" type="button">Relever le passeur</button>
-                      <p class="status" id="etat-relever"></p>
-                    `}
+                ${(() => {
+                  // On vient d'un projet, mais son adresse n'est pas connue (titre ambigu ou jamais
+                  // relevé). On nomme l'histoire et on oriente vers le relevé, sans présélectionner
+                  // une autre histoire qu'on écrirait par erreur.
+                  const unresolved = Boolean(target && !target.cardId);
+                  const targetKnown = target?.cardId
+                    ? stories.some((s) => s.cardId === target.cardId)
+                    : false;
+                  const options: Html[] = [];
+                  if (unresolved) {
+                    options.push(
+                      html`<option value="" selected>— choisis une histoire, ou relève le passeur —</option>`,
+                    );
+                  }
+                  if (target?.cardId && !targetKnown) {
+                    options.push(
+                      html`<option value="${target.cardId}" selected>
+                        ${target.title} — à relever sur le passeur
+                      </option>`,
+                    );
+                  }
+                  stories.forEach((story, i) => {
+                    const chosen = target?.cardId
+                      ? story.cardId === target.cardId
+                      : i === 0 && !target;
+                    options.push(
+                      html`<option value="${story.cardId}" ${chosen ? 'selected' : ''}>
+                        ${story.title}${story.copies ? ` · ${story.copies} copie(s)` : ''}
+                      </option>`,
+                    );
+                  });
+                  return html`
+                    ${unresolved
+                      ? html`<p class="alert warn" style="display:block">
+                          Pour encoder <strong>« ${target!.title} »</strong>, relie-la d'abord au
+                          passeur dans l'app Yoto (« Link to a card »), puis relève-le ci-dessous.
+                          Son adresse rejoindra alors la liste.
+                        </p>`
+                      : ''}
+                    ${options.length > 0
+                      ? html`
+                          <label for="histoire">Histoire à copier</label>
+                          <select id="histoire">${options}</select>
+                          <p class="muted" style="margin-top:var(--space-4)">
+                            Une autre histoire ? Relie-la au passeur dans l'app Yoto (« Link to a
+                            card »), puis relève-le — son adresse rejoindra la liste.
+                          </p>
+                        `
+                      : html`
+                          <select id="histoire" hidden></select>
+                          <p>
+                            Aucune histoire connue encore. Relie une histoire au passeur dans l'app
+                            Yoto (« Link to a card »), puis relève-le ici :
+                          </p>
+                        `}
+                  `;
+                })()}
+                <button id="relever" type="button">Relever le passeur</button>
+                <p class="status" id="etat-relever"></p>
               </section>
 
               <section class="panel" id="panneau-ecrire" hidden>
-                <h2>2. Copier sur une carte vierge</h2>
-                <p class="alert warn" style="display:block">
-                  <strong>Une puce neuve doit être formatée une fois avant la première écriture.</strong>
-                  Chrome ne sait pas le faire : avec l'app <em>NFC Tools</em>, « Autres » → « Effacer
-                  le tag » (ou les commandes de « Si ça bloque » en bas). Sans ça, l'écriture échoue
-                  avec « IO error ». Une fois formatée, la puce s'écrit ici sans souci.
-                </p>
+                <h2>2. Écrire sur une carte</h2>
                 <p class="consigne" id="consigne"></p>
-                <button id="ecrire" type="button">Écrire sur une vierge</button>
+                <button id="changer" type="button">Écrire sur une carte</button>
                 <p class="status" id="etat-ecrire"></p>
+                <p class="muted">
+                  La carte est lue avant d'être écrite : une copie ou une ancienne histoire change
+                  d'histoire en un geste, et le passeur posé ici est relevé, jamais écrasé — pose-le,
+                  retire-le, puis pose la carte à écrire.
+                </p>
+                <details>
+                  <summary>Puce neuve, ou carte qui ne se lit pas</summary>
+                  <p class="alert warn" style="display:block">
+                    <strong>Une puce neuve doit être formatée une fois avant la première écriture.</strong>
+                    Chrome ne sait pas le faire : avec l'app <em>NFC Tools</em>, « Autres » → « Effacer
+                    le tag » (ou les commandes de « Si ça bloque » en bas). Sans ça, l'écriture échoue
+                    avec « IO error ». Une fois formatée, la puce s'écrit ici sans souci.
+                  </p>
+                  <button id="ecrire" type="button">Écrire sans lire la carte</button>
+                </details>
                 <div id="journal" aria-live="polite"></div>
               </section>
 
@@ -231,9 +273,9 @@ function page(
 
 function verifyPage() {
   return layout(
-    { title: 'Lire une carte', nav: 'settings' },
+    { title: 'Lire une carte', nav: 'cards' },
     html`
-      <p><a class="back" href="/cartes/encoder">← Encoder une carte</a></p>
+      <p><a class="back" href="/cartes">← Cartes</a></p>
       <h1>Lire et vérifier une carte</h1>
       <p class="muted">
         Pose n'importe quelle carte — officielle, copie, vierge : on affiche l'histoire dont elle
@@ -286,6 +328,8 @@ async function identityFor(url: string, cardId: string, uid: string | undefined)
     url,
     ...(await lookUp(cardId)),
     passeur: Boolean(uid) && uid === getPasseur(),
+    // Une puce inconnue qui porte le contenu d'une carte MYO nommee est, a priori, cette carte.
+    cardName: tag ? tag.name : pool?.myo ? pool.nickname : null,
     project: project ? { id: project.id, title: project.title } : undefined,
     pool: pool ? { nickname: pool.nickname, ndefUrl: pool.ndef_url } : undefined,
     chip: tag
@@ -305,7 +349,9 @@ async function storiesWithAddress(): Promise<Story[]> {
   const titles = new Map<string, string>();
   if (isConnected()) {
     try {
-      for (const card of await listMyCards()) titles.set(card.cardId, card.title);
+      const remote = await listMyCards();
+      rememberTitles(remote);
+      for (const card of remote) titles.set(card.cardId, card.title);
     } catch {
       // Sans la bibliotheque, les surnoms du pool suffisent a choisir.
     }
@@ -320,7 +366,7 @@ async function storiesWithAddress(): Promise<Story[]> {
     .sort((a, b) => a.title.localeCompare(b.title, 'fr'));
 }
 
-const yotoUrlOf = (body: { url?: string } | undefined) => {
+const yotoUrlOf = (body: { url?: string | undefined } | undefined) => {
   const url = body?.url?.trim() ?? '';
   const parsed = parseYotoUrl(url);
   return parsed ? { url, cardId: parsed.cardId } : undefined;
@@ -334,13 +380,22 @@ export async function encodeRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Querystring: { projet?: string } }>('/cartes/encoder', async (request, reply) => {
     const projectId = Number(request.query.projet);
     const project = Number.isInteger(projectId) ? getProject(projectId) : undefined;
-    const target = project?.card_id
-      ? { cardId: project.card_id, title: project.title, projectId: project.id }
+    const stories = await storiesWithAddress();
+
+    // Le cardId d'un projet n'est pas toujours stocke (card_id null) ; on le retrouve alors par
+    // son titre dans la liste des histoires connues, tant que ce titre est sans ambiguite.
+    let targetCardId = project?.card_id ?? undefined;
+    if (!targetCardId && project) {
+      const byTitle = stories.filter((story) => story.title === project.title);
+      if (byTitle.length === 1) targetCardId = byTitle[0]!.cardId;
+    }
+    // Venir d'un projet pose toujours une cible (pour nommer l'histoire) ; le cardId peut rester
+    // indéterminé, auquel cas la page oriente vers le relevé plutôt que d'en présélectionner une.
+    const target = project
+      ? { cardId: targetCardId, title: project.title, projectId: project.id }
       : undefined;
 
-    return reply
-      .type('text/html')
-      .send(page(getPasseur(), await storiesWithAddress(), target));
+    return reply.type('text/html').send(page(getPasseur(), stories, target));
   });
 
   app.get('/cartes/verifier', async (_request, reply) =>
@@ -359,7 +414,7 @@ export async function encodeRoutes(app: FastifyInstance): Promise<void> {
   /** Oublier le passeur : perdu, abime, ou remplace par une autre carte MYO. */
   app.post<{ Body: { retour?: string } }>('/cartes/passeur/oublier', async (request, reply) => {
     forgetPasseur();
-    return reply.redirect(request.body?.retour === '/reglages' ? '/reglages' : '/cartes/encoder');
+    return reply.redirect(request.body?.retour === '/cartes' ? '/cartes' : '/cartes/encoder');
   });
 
   /**
@@ -377,7 +432,7 @@ export async function encodeRoutes(app: FastifyInstance): Promise<void> {
    * Le passeur vient d'etre pose : son adresse est memorisee pour l'histoire qu'il porte. C'est la
    * seule fois ou on en a besoin — les copies suivantes de cette histoire s'en passent.
    */
-  app.post<{ Body: { url?: string; uid?: string } }>('/cartes/releve', async (request, reply) => {
+  app.post<{ Body: { url?: string; uid?: string; projet?: string | number } }>('/cartes/releve', async (request, reply) => {
     const found = yotoUrlOf(request.body);
     if (!found) return reply.code(400).send(NOT_YOTO);
     const uid = request.body?.uid?.trim();
@@ -392,6 +447,19 @@ export async function encodeRoutes(app: FastifyInstance): Promise<void> {
 
     const identity = await identityFor(found.url, found.cardId, uid);
     saveAddress(found.cardId, nicknameFor(identity.title, found.cardId), found.url);
+    if (identity.library === 'ok' && identity.title) {
+      rememberTitles([{ cardId: found.cardId, title: identity.title }]);
+    }
+
+    // Releve depuis un projet qui ne connait pas encore son cardId : on le lui rattache, pour ne
+    // plus avoir a repasser par le passeur. Seulement si le titre Yoto est celui du projet — le
+    // passeur peut porter une autre histoire, et un mauvais lien ferait encoder la mauvaise.
+    const projectId = Number(request.body?.projet);
+    const project = Number.isInteger(projectId) ? getProject(projectId) : undefined;
+    if (project &&!project.card_id && identity.title === project.title) {
+      setProjectCard(project.id, found.cardId);
+      identity.project = { id: project.id, title: project.title };
+    }
     return reply.send({ ...identity, tags: tagsFor(found.cardId).length });
   });
 
@@ -407,16 +475,30 @@ export async function encodeRoutes(app: FastifyInstance): Promise<void> {
 
   /**
    * Note une copie qui vient d'etre ecrite. L'ecriture elle-meme se passe dans le telephone : le
-   * serveur n'en garde que la trace.
+   * serveur n'en garde que la trace. `previous` : l'adresse que la carte portait, quand elle a pu
+   * etre lue avant — on rend alors le nom de l'histoire remplacee.
    */
-  app.post<{ Body: { url?: string; uid?: string } }>('/cartes/encoder', async (request, reply) => {
+  app.post<{ Body: { url?: string; uid?: string; previous?: string } }>('/cartes/encoder', async (request, reply) => {
     const found = yotoUrlOf(request.body);
     if (!found) return reply.code(400).send(NOT_YOTO);
     if (request.body?.uid && request.body.uid === getPasseur()) {
       return reply.code(400).send({ error: 'C’est le passeur : il ne compte pas comme une copie.' });
     }
     saveAddress(found.cardId, nicknameFor(undefined, found.cardId), found.url);
-    recordTag(found.cardId, request.body?.uid?.trim() || undefined);
-    return reply.send({ cardId: found.cardId, tags: tagsFor(found.cardId).length });
+    const tag = recordTag(found.cardId, request.body?.uid?.trim() || undefined);
+
+    const previous = yotoUrlOf({ url: request.body?.previous });
+    const replaced = previous && previous.cardId !== found.cardId
+      ? (findProjectByCard(previous.cardId)?.title ??
+        findByCardId(previous.cardId)?.nickname ??
+        previous.cardId)
+      : null;
+    return reply.send({
+      cardId: found.cardId,
+      tags: tagsFor(found.cardId).length,
+      replaced,
+      // Seule une puce reconnue a son numero se nomme : les autres ne se distinguent pas.
+      tag: tag.uid ? { id: tag.id, name: tag.name } : null,
+    });
   });
 }

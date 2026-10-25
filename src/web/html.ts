@@ -51,9 +51,11 @@ export interface LayoutOptions {
 }
 
 export function layout(options: LayoutOptions, body: Html): string {
-  // Un projet EST une carte : les separer creait deux entrees pour la meme chose.
+  // Une histoire est ce qu'on ecoute, une carte l'objet qu'on pose sur le lecteur : une meme
+  // histoire peut etre sur plusieurs cartes, et une carte change d'histoire.
   const tabs: [string, string, string][] = [
-    ['cards', '/', 'Cartes'],
+    ['stories', '/', 'Histoires'],
+    ['cards', '/cartes', 'Cartes'],
     ['settings', '/reglages', 'Réglages'],
   ];
 

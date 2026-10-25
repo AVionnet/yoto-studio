@@ -13,12 +13,23 @@ import { pipeline } from 'node:stream/promises';
 
 import type { FastifyInstance } from 'fastify';
 
-import { findByCardId, listPool, unenroll } from '../../db/cards.ts';
+import {
+  findByCardId,
+  contentIdsFor,
+  holdersByContent,
+  mergeHolders,
+  listMyoCards,
+  holderNames,
+  holdersSentence,
+  unenroll,
+  type Holders,
+} from '../../db/cards.ts';
 import {
   addTrack,
   clearProjectSource,
   createProject,
   deleteProject,
+  findProjectByCard,
   getProject,
   listTracks,
   setProjectCover,
@@ -28,7 +39,7 @@ import {
   type Project,
   type TrackRow,
 } from '../../db/projects.ts';
-import { enqueue, getJob, isTerminal, latestJobFor, requestCancel } from '../../jobs/queue.ts';
+import { enqueue, getJob, isTerminal, latestJobFor, requestCancel, type Job } from '../../jobs/queue.ts';
 import { projectDir } from '../../jobs/worker.ts';
 import { removeCover, storeCover } from '../../pipeline/cover.ts';
 import { titleFromFilename } from '../../pipeline/publish.ts';
@@ -54,6 +65,7 @@ import {
 import type { DisplayIcon } from '../../yoto/types.ts';
 import { html, layout, raw, type Html } from '../html.ts';
 import { requireAuth } from './auth.ts';
+import { ETATS } from './home.ts';
 
 /** Lien vers la fiche du contenu dans l'application web de Yoto. */
 function yotoLink(cardId: string | null): Html | string {
@@ -93,37 +105,34 @@ function isYoutubeUrl(value: string): boolean {
 const inFlight = new Set<string>();
 
 function newProjectPage(token: string, error?: string): string {
-  const pool = listPool();
+  const myo = listMyoCards();
 
   return layout(
-    { title: 'Nouvelle carte', nav: 'projects' },
+    { title: 'Nouvelle histoire', nav: 'stories' },
     html`
-      <h1>Nouvelle carte</h1>
+      <a class="back" href="/">← Histoires</a>
+      <h1>Nouvelle histoire</h1>
       ${error ? html`<p class="alert error">${error}</p>` : ''}
       <form class="panel" method="post" action="/projets" enctype="multipart/form-data"
             data-guard>
         <input type="hidden" name="token" value="${token}">
 
-        <label for="title">Titre de la carte</label>
+        <label for="title">Titre de l'histoire</label>
         <input id="title" name="title" required maxlength="140"
                placeholder="Jack et le haricot magique">
 
-        <label for="cardId">Destination</label>
+        <label for="cardId">Où publier</label>
         <select id="cardId" name="cardId">
-          <option value="">Nouvelle carte — à lier une fois dans l'app Yoto</option>
-          ${pool.map(
-            (card) =>
-              html`<option value="${card.card_id}">
-                ${card.nickname} — remplacer son contenu (${card.track_count} piste(s))
-              </option>`,
-          )}
+          <option value="">Nouveau contenu Yoto — à mettre ensuite sur une carte</option>
+          ${myo.map((card) => {
+            const replaced = findProjectByCard(card.card_id)?.title;
+            return html`<option value="${card.card_id}">
+              Sur la carte MYO « ${card.nickname} »${replaced ? ` — à la place de « ${replaced} »` : ''}
+            </option>`;
+          })}
         </select>
         <p class="muted">
-          ${pool.length === 0
-            ? html`Ton compte ne contient encore aucun contenu MYO. La première carte en créera
-                un ; tu la lieras ensuite à une carte physique, une seule fois.`
-            : html`Réutiliser une carte du pool remplace son contenu. Le tag NFC n'est jamais
-                touché.`}
+          Publier sur une carte MYO nommée change l'histoire qu'elle joue, sans la toucher.
         </p>
 
         <div class="tabs" data-tabs>
@@ -156,7 +165,7 @@ function newProjectPage(token: string, error?: string): string {
           </div>
         </div>
 
-        <button type="submit" data-busy-label="Préparation…">Fabriquer</button>
+        <button type="submit" data-busy-label="Préparation…">Créer l’histoire</button>
         <p class="muted" data-busy-note hidden>
           Lecture de la source, quelques secondes. Ne recharge pas la page.
         </p>
@@ -247,7 +256,7 @@ function iconPickerPage(
   error?: string,
 ): string {
   return layout(
-    { title: `Icône — ${track.title}`, nav: 'projects' },
+    { title: `Icône — ${track.title}`, nav: 'stories' },
     html`
       <h1>Icône de « ${track.title} »</h1>
       <p class="muted">
@@ -329,7 +338,7 @@ function coverPickerPage(project: Project, error?: string): string {
   const aiReady = isConfigured();
 
   return layout(
-    { title: `Couverture — ${project.title}`, nav: 'projects' },
+    { title: `Couverture — ${project.title}`, nav: 'stories' },
     html`
       <h1>Couverture de « ${project.title} »</h1>
       <p class="muted">L'image affichée dans la bibliothèque de l'app Yoto.</p>
@@ -388,6 +397,279 @@ function coverPickerPage(project: Project, error?: string): string {
       <p><a href="/projets/${project.id}">Retour au projet</a></p>
     `,
   );
+}
+
+/*
+ * La fiche d'une histoire, dans l'ordre ou elle se fabrique : ses chapitres, son habillage, sa
+ * publication chez Yoto, puis les cartes qui la portent. Chaque geste n'a qu'une place.
+ */
+
+function projectHead(project: Project, tracks: TrackRow[]): Html {
+  const totalMs = tracks.reduce((sum, track) => sum + (track.duration_ms ?? 0), 0);
+  const published = project.state === 'published';
+  return html`
+    <a class="back" href="/">← Histoires</a>
+    <div class="project-head">
+      ${project.cover_url
+        ? html`<div class="icon-tile" aria-hidden="true">
+            <img class="photo" src="${project.cover_url}" alt="">
+          </div>`
+        : ''}
+      <div>
+        <h1>${project.title}</h1>
+        <div class="story-status">
+          <span class="chip ${published ? '' : 'pale'}">${ETATS[project.state] ?? project.state}</span>
+          <span class="story-when">
+            ${tracks.length} chapitre${tracks.length > 1 ? 's' : ''}${totalMs ? ` · ${formatMs(totalMs)}` : ''}
+            ${project.card_id ? html` · <code>${project.card_id}</code>` : ''}
+          </span>
+        </div>
+      </div>
+    </div>
+    ${tracks.length > 0
+      ? html`<div class="picker">
+          <a class="button" href="/projets/${project.id}/ecouter">Écouter</a>
+        </div>`
+      : ''}
+  `;
+}
+
+/** Le travail en cours ou tout juste fini. Rien du tout quand il n'y en a pas. */
+function jobPanel(project: Project, job: Job | undefined, running: boolean): Html | string {
+  if (!job) return '';
+  const built = job.state === 'done' && job.kind === 'build';
+  const isNew = built && (JSON.parse(job.result_json ?? '{}') as { isNew?: boolean }).isNew;
+  return html`
+    <section class="panel">
+      <div id="etat" data-project="${project.id}" data-running="${running ? '1' : '0'}">
+        <p class="alert ${job.state === 'error' ? 'error' : job.state === 'done' ? 'ok' : ''}">
+          <span id="message">${job.error ?? job.message}</span>
+        </p>
+        ${running || job.state === 'error'
+          ? html`<progress id="barre" value="${job.progress}" max="${job.total || 1}"></progress>`
+          : ''}
+      </div>
+      ${running
+        ? html`<form method="post" action="/projets/${project.id}/annuler">
+            <button class="link" type="submit">Annuler</button>
+          </form>`
+        : ''}
+      ${built
+        ? html`<p class="muted" style="margin:0">
+            ${isNew
+              ? html`Contenu créé chez Yoto. Reste à le mettre sur une carte : voir
+                  <a href="#carte">« Sur quelles cartes »</a>.`
+              : html`Contenu mis à jour : les cartes qui le portent jouent la nouvelle version.`}
+          </p>`
+        : ''}
+    </section>
+  `;
+}
+
+function tracksPanel(project: Project, tracks: TrackRow[], running: boolean): Html | string {
+  const missing = tracks.filter((track) => !track.file_path).length;
+  const voice = project.source_kind === 'voice';
+  if (tracks.length === 0 && !voice) return '';
+  return html`
+    <section class="panel">
+      <h2>Chapitres</h2>
+      ${missing > 0
+        ? html`<p class="alert error">
+            ${missing} chapitre(s) n'ont pas encore de son.
+            <a href="/projets/${project.id}/enregistrer">Aller les enregistrer</a>.
+          </p>`
+        : ''}
+      <div class="picker">
+        ${voice
+          ? html`<a class="button ghost" href="/projets/${project.id}/enregistrer">
+              ${missing > 0 ? 'Enregistrer les chapitres' : 'Réenregistrer un chapitre'}
+            </a>`
+          : ''}
+        ${isConfigured() && !running && tracks.some((track) => !track.icon_media_id)
+          ? html`<form method="post" action="/projets/${project.id}/icones/dessiner">
+              <button class="button ghost" type="submit">Dessiner les icônes manquantes</button>
+            </form>`
+          : ''}
+      </div>
+      <table class="stack">
+        <thead><tr><th>#</th><th>Titre</th><th>Durée</th><th>Icône</th></tr></thead>
+        <tbody>
+          ${tracks.map(
+            (track) => html`<tr>
+              <td data-label="Chapitre">${track.idx + 1}</td>
+              <td data-label="Titre">
+                <div>
+                  ${track.title}
+                  ${!isEdgeClean(track)
+                    ? html`<span class="chip warn"
+                            title="Le début ou la fin de cette piste semble couper un mot.">
+                            ⚠️ coupe
+                          </span>`
+                    : ''}
+                </div>
+              </td>
+              <td data-label="Durée">
+                ${track.duration_ms ? formatMs(track.duration_ms) : track.file_path ? '—' : 'à enregistrer'}
+              </td>
+              <td data-label="Icône">
+                <a class="track-icon-link" href="/projets/${project.id}/pistes/${track.idx}/icone">
+                  ${track.icon_url ? html`<img src="${track.icon_url}" alt="" width="24" height="24">` : ''}
+                  ${track.icon_media_id ? 'Changer' : 'Choisir'}
+                </a>
+              </td>
+            </tr>`,
+          )}
+        </tbody>
+      </table>
+    </section>
+  `;
+}
+
+/** Ce qui habille l'histoire : la couverture chez Yoto, et l'étiquette qu'on en tire. */
+function dressingPanel(project: Project): Html {
+  return html`
+    <section class="panel">
+      <h2>Couverture et étiquette</h2>
+      ${project.cover_url
+        ? html`<div class="icon-current">
+            <div class="icon-tile" aria-hidden="true">
+              <img class="photo" src="${project.cover_url}" alt="">
+            </div>
+            <div class="picker" style="margin:0">
+              <a class="button ghost" href="/projets/${project.id}/couverture">Changer la couverture</a>
+              <a class="button ghost" href="/projets/${project.id}/etiquette">Étiquette à découper</a>
+            </div>
+          </div>`
+        : html`<p class="muted">
+              Aucune couverture : l'app Yoto affichera un carré vide, et l'étiquette à découper en a
+              besoin.
+            </p>
+            <a class="button ghost" href="/projets/${project.id}/couverture">Choisir une couverture</a>`}
+    </section>
+  `;
+}
+
+function publishPanel(
+  project: Project,
+  tracks: TrackRow[],
+  running: boolean,
+): Html | string {
+  if (tracks.length === 0) return '';
+  const missing = tracks.filter((track) => !track.file_path).length;
+  const published = project.state === 'published';
+  // Les contenus qui jouent deja l'histoire : republier doit les mettre a jour, pas en creer un.
+  const mine = contentIdsFor(project);
+  const myo = listMyoCards();
+  const others = myo.filter((card) => !mine.includes(card.card_id));
+  // Un contenu de l'histoire qui n'est sur aucune carte MYO nommee : celui qu'elle connait.
+  const ownOnly = project.card_id && !myo.some((card) => card.card_id === project.card_id);
+  return html`
+    <section class="panel">
+      <h2>Publier chez Yoto</h2>
+      <p class="muted">
+        Envoie les chapitres, les icônes et la couverture vers ton compte Yoto. Les cartes qui
+        portent déjà l'histoire jouent la nouvelle version, sans rien réécrire.
+      </p>
+      ${published && project.card_id
+        ? html`<p>Publiée sous <code>${project.card_id}</code>. ${yotoLink(project.card_id)}</p>`
+        : ''}
+      ${missing > 0
+        ? html`<p class="muted">Enregistre d'abord les chapitres sans son (voir plus haut).</p>`
+        : running
+          ? html`<p class="muted">Un travail est en cours ; attends qu'il se termine.</p>`
+          : html`
+              <form method="post" action="/projets/${project.id}/publier" data-guard>
+                <label for="cardId">Où publier</label>
+                <select id="cardId" name="cardId">
+                  ${ownOnly
+                    ? html`<option value="${project.card_id}" selected>Mettre à jour cette histoire</option>`
+                    : ''}
+                  ${myo
+                    .filter((card) => mine.includes(card.card_id))
+                    .map(
+                      (card, index) => html`<option value="${card.card_id}"
+                          ${!ownOnly && index === 0 ? raw('selected') : ''}>
+                          Carte MYO « ${card.nickname} » (la porte déjà)
+                        </option>`,
+                    )}
+                  <option value="">Nouveau contenu Yoto — à mettre ensuite sur une carte</option>
+                  ${others.map((card) => {
+                    const replaced = findProjectByCard(card.card_id)?.title;
+                    return html`<option value="${card.card_id}">
+                      Sur la carte MYO « ${card.nickname} »${replaced ? ` — à la place de « ${replaced} »` : ''}
+                    </option>`;
+                  })}
+                </select>
+                <button type="submit" data-busy-label="Envoi…">
+                  ${published ? 'Republier' : 'Publier'}
+                </button>
+              </form>
+              <script src="/static/form.js"></script>
+            `}
+    </section>
+  `;
+}
+
+/** Les cartes qui portent l'histoire, et comment en ajouter une. */
+function cardPanel(project: Project, holders: Holders | undefined): Html | string {
+  if (project.state !== 'published') return '';
+  const addressKnown = contentIdsFor(project).some((id) => findByCardId(id)?.ndef_url);
+  const onCards = holdersSentence(holders);
+  return html`
+    <section class="panel" id="carte">
+      <h2>Sur quelles cartes</h2>
+      ${onCards
+        ? html`<p>Sur ${onCards}. <a href="/cartes">Nommer les cartes</a></p>`
+        : html`<p>Aucune carte ne porte encore cette histoire.</p>`}
+
+      <h3>Sur une puce du commerce</h3>
+      <p class="muted">
+        ${addressKnown
+          ? html`Adresse déjà relevée : pose directement la puce, neuve ou déjà écrite.`
+          : html`Relie d'abord l'histoire à ton passeur dans l'app Yoto (« Link to a card ») ; la
+              page te guide ensuite.`}
+      </p>
+      <p><a class="button" href="/cartes/encoder?projet=${project.id}">Fabriquer une carte</a></p>
+
+      <h3>Sur une carte MYO officielle</h3>
+      <p class="muted">
+        Une carte MYO déjà nommée : choisis-la dans « Où publier » ci-dessus. Une carte neuve :
+        ouvre l'histoire chez Yoto, « Link to a card », approche la carte, puis nomme-la dans
+        <a href="/cartes">Cartes</a>.
+      </p>
+      ${yotoLink(project.card_id)}
+    </section>
+  `;
+}
+
+function deletePanel(project: Project, holders: Holders | undefined): Html {
+  const { names } = holderNames(holders);
+  return html`
+    <section class="panel danger">
+      <h2>Supprimer cette histoire</h2>
+      <p class="muted">
+        Efface les chapitres, les fichiers de travail et l'historique de cette application.
+      </p>
+      <form method="post" action="/projets/${project.id}/supprimer"
+            onsubmit="return confirm('Supprimer « ${project.title} » ?')">
+        ${project.card_id
+          ? html`
+              <label class="check">
+                <input type="checkbox" name="alsoYoto" value="1" checked>
+                <span>
+                  Supprimer aussi le contenu <code>${project.card_id}</code> chez Yoto.
+                  ${names.length
+                    ? html`<strong>${names.join(', ')} cesseront de jouer</strong> : il faudra les
+                        mettre sur une autre histoire.`
+                    : html`Irréversible.`}
+                </span>
+              </label>
+            `
+          : ''}
+        <button class="danger" type="submit">${raw(TRASH_ICON)} Supprimer</button>
+      </form>
+    </section>
+  `;
 }
 
 /** Réaffiche le formulaire avec un jeton neuf : sans ça, corriger une erreur serait bloqué. */
@@ -540,17 +822,12 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
     '/projets/:id',
     async (request, reply) => {
     const project = getProject(Number(request.params.id));
-    if (!project) return reply.status(404).send('Projet introuvable.');
+    if (!project) return reply.status(404).send('Histoire introuvable.');
 
     const job = latestJobFor(project.id);
     const tracks = listTracks(project.id);
     const running = job ? !isTerminal(job.state) : false;
-    const poolCard = project.card_id ? findByCardId(project.card_id) : undefined;
-    const pool = listPool();
-    const missing = tracks.filter((track) => !track.file_path).length;
-    // Republier n'a de sens que si le projet a des pistes et que rien ne tourne deja.
-    const publishable = tracks.length > 0 && !running;
-
+    const holders = mergeHolders(holdersByContent(), contentIdsFor(project));
     // Un decoupage en attente n'a encore aucune piste : la revue remplace le tableau habituel.
     const reviewing = project.state === 'reviewing' && !!project.source_path;
     let review: { segments: Segment[]; totalMs: number } | undefined;
@@ -570,70 +847,10 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
 
     return reply.type('text/html').send(
       layout(
-        { title: project.title, nav: 'projects' },
+        { title: project.title, nav: 'stories' },
         html`
-          <div class="project-head">
-            ${project.cover_url
-              ? html`<div class="icon-tile" aria-hidden="true">
-                  <img class="photo" src="${project.cover_url}" alt="">
-                </div>`
-              : ''}
-            <div>
-              <h1>${project.title}</h1>
-              <a href="/projets/${project.id}/couverture">
-                ${project.cover_url ? 'Changer la couverture' : 'Choisir une couverture'}
-              </a>
-              ${project.cover_url
-                ? html` ·
-                    <a href="/projets/${project.id}/etiquette">Étiquette à découper</a>`
-                : ''}
-            </div>
-          </div>
-
-          <section class="panel">
-            <div id="etat" data-project="${project.id}" data-running="${running ? '1' : '0'}">
-              ${job
-                ? html`
-                    <p class="alert ${job.state === 'error' ? 'error' : job.state === 'done' ? 'ok' : ''}">
-                      <span id="message">${job.error ?? job.message}</span>
-                    </p>
-                    <progress id="barre" value="${job.progress}" max="${job.total || 1}"></progress>
-                  `
-                : html`<p class="muted">Aucun travail en cours.</p>`}
-            </div>
-
-            ${running
-              ? html`<form method="post" action="/projets/${project.id}/annuler">
-                  <button class="link" type="submit">Annuler</button>
-                </form>`
-              : ''}
-
-            ${job?.state === 'done' && job.kind === 'build'
-              ? (JSON.parse(job.result_json ?? '{}') as { isNew?: boolean }).isNew
-                ? html`<div class="alert ok" style="display:block">
-                    <p><strong>Contenu créé</strong> sous l'identifiant <code>${project.card_id}</code>.</p>
-                    <p>
-                      Dernière étape manuelle, une seule fois dans la vie de cette carte : ouvre
-                      ce contenu chez Yoto, choisis « Link to a card » et approche une carte MYO.
-                      Ensuite, republier dessus ne demandera plus rien.
-                    </p>
-                    <p>
-                      Pour qu'une <strong>carte vierge</strong> du commerce porte cette histoire :
-                      lie le contenu à ta carte MYO « passeur » comme ci-dessus, puis
-                      <a href="/cartes/encoder?projet=${project.id}">encode la vierge</a>. Le
-                      passeur redevient libre pour l'histoire suivante.
-                    </p>
-                    <p style="margin:0">${yotoLink(project.card_id)}</p>
-                  </div>`
-                : html`<div class="alert ok" style="display:block">
-                    <p>Carte <code>${project.card_id}</code> mise à jour. Insère-la dans le lecteur.</p>
-                    <p style="margin:0">
-                      ${yotoLink(project.card_id)} ·
-                      <a href="/cartes/encoder?projet=${project.id}">Encoder une carte vierge</a>
-                    </p>
-                  </div>`
-              : ''}
-          </section>
+          ${projectHead(project, tracks)}
+          ${jobPanel(project, job, running)}
 
           ${reviewing
             ? review
@@ -645,122 +862,22 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
                 </section>`
             : ''}
 
-          ${publishable
-            ? html`
-                <section class="panel">
-                  <h2>Publier sur une carte</h2>
-                  ${missing > 0
-                    ? html`<p class="alert error">
-                        ${missing} chapitre(s) n'ont pas encore de son.
-                        <a href="/projets/${project.id}/enregistrer">Aller les enregistrer</a>.
-                      </p>`
-                    : html`
-                        <form method="post" action="/projets/${project.id}/publier" data-guard>
-                          <label for="cardId">Destination</label>
-                          <select id="cardId" name="cardId">
-                            <option value="">Nouvelle carte — à lier une fois dans l'app Yoto</option>
-                            ${pool.map(
-                              (card) => html`<option value="${card.card_id}"
-                                  ${card.card_id === project.card_id ? raw('selected') : ''}>
-                                  ${card.nickname} — remplacer son contenu
-                                </option>`,
-                            )}
-                          </select>
-                          <button type="submit" data-busy-label="Envoi…">
-                            ${project.state === 'published' ? 'Republier' : 'Publier'}
-                          </button>
-                        </form>
-                        <script src="/static/form.js"></script>
-                      `}
-                </section>
-              `
-            : ''}
-
-          ${tracks.length > 0
-            ? html`<section class="panel">
-                <h2>${tracks.length} piste(s)</h2>
-                <div class="picker">
-                  <a class="button" href="/projets/${project.id}/ecouter">Écouter</a>
-                  ${isConfigured() && !running && tracks.some((track) => !track.icon_media_id)
-                    ? html`<form method="post" action="/projets/${project.id}/icones/dessiner">
-                        <button class="button ghost" type="submit">
-                          Dessiner les icônes manquantes
-                        </button>
-                      </form>`
-                    : ''}
-                </div>
-                <table class="stack">
-                  <thead><tr><th>#</th><th>Titre</th><th>Icône</th><th>Transcodé</th></tr></thead>
-                  <tbody>
-                    ${tracks.map(
-                      (track) => html`<tr>
-                        <td data-label="Piste">${track.idx + 1}</td>
-                        <td data-label="Titre">
-                          <div>
-                            ${track.title}
-                            ${!isEdgeClean(track)
-                              ? html`<span class="chip warn"
-                                      title="Le début ou la fin de cette piste semble couper un mot.">
-                                      ⚠️ coupe
-                                    </span>`
-                              : ''}
-                          </div>
-                        </td>
-                        <td data-label="Icône">
-                          <a class="track-icon-link"
-                             href="/projets/${project.id}/pistes/${track.idx}/icone">
-                            ${track.icon_url
-                              ? html`<img src="${track.icon_url}" alt="" width="24" height="24">`
-                              : ''}
-                            ${track.icon_media_id ? 'Changer' : 'Choisir'}
-                          </a>
-                        </td>
-                        <td data-label="Transcodé">${track.transcoded_sha256 ? '✓' : '—'}</td>
-                      </tr>`,
-                    )}
-                  </tbody>
-                </table>
-              </section>`
-            : ''}
-
-          <section class="panel danger">
-            <h2>Supprimer ce projet</h2>
-            <p class="muted">
-              Efface les pistes, les fichiers de travail et l'historique de cette application.
-            </p>
-            <form method="post" action="/projets/${project.id}/supprimer"
-                  onsubmit="return confirm('Supprimer « ${project.title} » ?')">
-              ${project.card_id
-                ? html`
-                    <label class="check">
-                      <input type="checkbox" name="alsoYoto" value="1" checked>
-                      <span>
-                        Supprimer aussi le contenu <code>${project.card_id}</code> chez Yoto.
-                        ${poolCard
-                          ? html`<strong>La carte « ${poolCard.nickname} » cessera de jouer</strong>
-                              tant qu'elle n'aura pas été reliée à un autre contenu dans l'app.`
-                          : html`Irréversible.`}
-                      </span>
-                    </label>
-                  `
-                : ''}
-              <button class="danger" type="submit">
-                ${raw(TRASH_ICON)} Supprimer
-              </button>
-            </form>
-          </section>
+          ${tracksPanel(project, tracks, running)}
+          ${dressingPanel(project)}
+          ${publishPanel(project, tracks, running)}
+          ${cardPanel(project, holders)}
+          ${deletePanel(project, holders)}
 
           <script src="/static/progress.js"></script>
         `,
       ),
     );
   });
-
   app.get<{ Params: { id: string; idx: string }; Querystring: { q?: string } }>(
     '/projets/:id/pistes/:idx/icone',
     async (request, reply) => {
       const project = getProject(Number(request.params.id));
-      if (!project) return reply.status(404).send('Projet introuvable.');
+      if (!project) return reply.status(404).send('Histoire introuvable.');
       const idx = Number(request.params.idx);
       const track = listTracks(project.id).find((row) => row.idx === idx);
       if (!track) return reply.status(404).send('Piste introuvable.');
@@ -796,7 +913,7 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
       const projectId = Number(request.params.id);
       const idx = Number(request.params.idx);
       const project = getProject(projectId);
-      if (!project) return reply.status(404).send('Projet introuvable.');
+      if (!project) return reply.status(404).send('Histoire introuvable.');
       const track = listTracks(projectId).find((row) => row.idx === idx);
       if (!track) return reply.status(404).send('Piste introuvable.');
 
@@ -825,7 +942,7 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
       const projectId = Number(request.params.id);
       const idx = Number(request.params.idx);
       const project = getProject(projectId);
-      if (!project) return reply.status(404).send('Projet introuvable.');
+      if (!project) return reply.status(404).send('Histoire introuvable.');
       const track = listTracks(projectId).find((row) => row.idx === idx);
       if (!track) return reply.status(404).send('Piste introuvable.');
 
@@ -856,14 +973,14 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
 
   app.get<{ Params: { id: string } }>('/projets/:id/couverture', async (request, reply) => {
     const project = getProject(Number(request.params.id));
-    if (!project) return reply.status(404).send('Projet introuvable.');
+    if (!project) return reply.status(404).send('Histoire introuvable.');
     return reply.type('text/html').send(coverPickerPage(project));
   });
 
   app.post<{ Params: { id: string } }>('/projets/:id/couverture', async (request, reply) => {
     const projectId = Number(request.params.id);
     const project = getProject(projectId);
-    if (!project) return reply.status(404).send('Projet introuvable.');
+    if (!project) return reply.status(404).send('Histoire introuvable.');
 
     const file = await request.file();
     if (!file) {
@@ -888,7 +1005,7 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
     async (request, reply) => {
       const projectId = Number(request.params.id);
       const project = getProject(projectId);
-      if (!project) return reply.status(404).send('Projet introuvable.');
+      if (!project) return reply.status(404).send('Histoire introuvable.');
 
       // Le debut de l'histoire, quand elle existe, vaut mieux que n'importe quelle consigne :
       // le dessin parle alors de ce que la carte raconte vraiment.
@@ -1051,7 +1168,7 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
           const message = error instanceof Error ? error.message : String(error);
           return reply.status(502).type('text/html').send(
             layout(
-              { title: 'Suppression impossible', nav: 'cards' },
+              { title: 'Suppression impossible', nav: 'stories' },
               html`
                 <h1>Suppression impossible</h1>
                 <section class="panel">

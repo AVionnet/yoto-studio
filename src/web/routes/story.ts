@@ -34,7 +34,7 @@ const MIC_ICON =
 
 function newStoryPage(error?: string): string {
   return layout(
-    { title: 'Écrire une histoire', nav: 'cards' },
+    { title: 'Écrire une histoire', nav: 'stories' },
     html`
       <a class="back" href="/">← Bibliothèque</a>
       <h1>Écrire une histoire</h1>
@@ -116,14 +116,14 @@ export async function storyRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Params: { id: string } }>('/projets/:id/enregistrer', async (request, reply) => {
     const projectId = Number(request.params.id);
     const project = getProject(projectId);
-    if (!project) return reply.status(404).send('Projet introuvable.');
+    if (!project) return reply.status(404).send('Histoire introuvable.');
 
     const tracks = listTracks(projectId);
     const recorded = tracks.filter((track) => track.file_path).length;
 
     return reply.type('text/html').send(
       layout(
-        { title: project.title, nav: 'cards' },
+        { title: project.title, nav: 'stories' },
         html`
           <a class="back" href="/projets/${projectId}">← Retour au projet</a>
           <h1>${project.title}</h1>

@@ -1,10 +1,20 @@
-/** Le pool : les cartes physiques enrolees une fois pour toutes. */
+/**
+ * Les cartes et les contenus qu'elles portent.
+ *
+ * Une histoire vit chez Yoto sous un identifiant de contenu (`card_id`). Une carte est l'objet
+ * qu'on pose sur le lecteur : une carte MYO officielle, liee une fois a un contenu dans l'app
+ * Yoto, ou une copie sur une puce du commerce, qui porte l'adresse d'un contenu.
+ */
 import { db, deleteSetting, getSetting, setSetting } from './index.ts';
 
 export interface PoolCard {
   id: number;
   card_id: string;
   nickname: string;
+  /** 1 si une carte MYO physique, nommee par nous, porte ce contenu. */
+  myo: number;
+  /** Le titre de l'histoire chez Yoto, quand on l'a vu passer. */
+  title: string | null;
   ndef_url: string | null;
   track_count: number;
   current_project_id: number | null;
@@ -15,6 +25,7 @@ export interface PoolCard {
 export interface CardTag {
   id: number;
   uid: string | null;
+  name: string | null;
   card_id: string;
   written_at: string;
 }
@@ -39,6 +50,27 @@ export function enroll(cardId: string, nickname: string, ndefUrl?: string): void
              updated_at = excluded.updated_at`,
     )
     .run(cardId, nickname.trim(), ndefUrl ?? null);
+}
+
+/** Les cartes MYO officielles qu'on possede, chacune liee a un contenu. */
+export function listMyoCards(): PoolCard[] {
+  return db()
+    .prepare('SELECT * FROM cards WHERE myo = 1 ORDER BY nickname COLLATE NOCASE')
+    .all() as PoolCard[];
+}
+
+/** Nomme la carte MYO qui porte ce contenu : « la bleue ». */
+export function nameMyoCard(cardId: string, name: string): void {
+  enroll(cardId, name);
+  db().prepare('UPDATE cards SET myo = 1 WHERE card_id = ?').run(cardId);
+}
+
+/**
+ * Ce contenu n'est plus sur une carte MYO qu'on possede. La ligne reste : l'histoire qui le
+ * publie doit garder son identifiant, et son adresse relevee reste utile aux copies.
+ */
+export function forgetMyoCard(cardId: string): void {
+  db().prepare('UPDATE cards SET myo = 0 WHERE card_id = ?').run(cardId);
 }
 
 export function unenroll(cardId: string): void {
@@ -78,19 +110,57 @@ export const forgetPasseur = (): void => deleteSetting(PASSEUR);
  * Note une puce vierge qui vient d'etre encodee. La cle est l'uid : une puce ne porte qu'un
  * enregistrement NDEF, donc la reencoder deplace simplement son contenu.
  */
-export function recordTag(cardId: string, uid: string | undefined): void {
+export function recordTag(cardId: string, uid: string | undefined): CardTag {
   if (uid) {
-    db()
+    // Le nom suit la puce : la reencoder change son histoire, pas son nom.
+    return db()
       .prepare(
         `INSERT INTO card_tags (uid, card_id) VALUES (?, ?)
          ON CONFLICT (uid) DO UPDATE
-           SET card_id = excluded.card_id, written_at = datetime('now')`,
+           SET card_id = excluded.card_id, written_at = datetime('now')
+         RETURNING *`,
       )
-      .run(uid, cardId);
-    return;
+      .get(uid, cardId) as CardTag;
   }
   // Sans uid on ne peut pas reconnaitre la puce : on garde quand meme la trace de l'encodage.
-  db().prepare('INSERT INTO card_tags (card_id) VALUES (?)').run(cardId);
+  return db()
+    .prepare('INSERT INTO card_tags (card_id) VALUES (?) RETURNING *')
+    .get(cardId) as CardTag;
+}
+
+/** Les copies, sans le passeur : il change d'histoire a chaque liaison, ce n'en est pas une. */
+export function listTags(): CardTag[] {
+  return db()
+    .prepare('SELECT * FROM card_tags WHERE uid IS NULL OR uid <> ? ORDER BY written_at DESC')
+    .all(getPasseur() ?? '') as CardTag[];
+}
+
+export function renameTag(id: number, name: string): void {
+  db()
+    .prepare('UPDATE card_tags SET name = ? WHERE id = ?')
+    .run(name.trim().slice(0, 60) || null, id);
+}
+
+/** Le nom a montrer pour une copie : le sien, sinon de quoi la distinguer. */
+export const tagLabel = (tag: CardTag): string =>
+  tag.name ?? (tag.uid ? `puce ${tag.uid.slice(-5)}` : 'copie sans numéro');
+
+/** Les cartes qui portent un contenu : les MYO par leur nom, les copies une par une. */
+export interface Holders {
+  myo: string[];
+  copies: CardTag[];
+}
+
+export function holdersByContent(): Map<string, Holders> {
+  const holders = new Map<string, Holders>();
+  const of = (cardId: string): Holders => {
+    let entry = holders.get(cardId);
+    if (!entry) holders.set(cardId, (entry = { myo: [], copies: [] }));
+    return entry;
+  };
+  for (const card of listMyoCards()) of(card.card_id).myo.push(card.nickname);
+  for (const tag of listTags()) of(tag.card_id).copies.push(tag);
+  return holders;
 }
 
 export function tagsFor(cardId: string): CardTag[] {
@@ -104,16 +174,62 @@ export function findTag(uid: string): CardTag | undefined {
   return db().prepare('SELECT * FROM card_tags WHERE uid = ?').get(uid) as CardTag | undefined;
 }
 
-/** Combien de cartes physiques portent chaque contenu, pour l'afficher dans le pool. */
-export function tagCounts(): Map<string, number> {
-  const rows = db()
-    .prepare('SELECT card_id, count(*) AS n FROM card_tags GROUP BY card_id')
-    .all() as { card_id: string; n: number }[];
-  return new Map(rows.map((row) => [row.card_id, row.n]));
+
+
+/** Retient le titre Yoto des contenus connus, a chaque fois qu'on voit passer la bibliotheque. */
+export function rememberTitles(contents: { cardId: string; title: string }[]): void {
+  const update = db().prepare('UPDATE cards SET title = ? WHERE card_id = ?');
+  db().transaction(() => {
+    for (const content of contents) update.run(content.title, content.cardId);
+  })();
 }
 
-export function setTrackCount(cardId: string, count: number): void {
-  db()
-    .prepare(`UPDATE cards SET track_count = ?, updated_at = datetime('now') WHERE card_id = ?`)
-    .run(count, cardId);
+/**
+ * Les contenus d'une histoire : celui qu'elle connait, et ceux qui portent son titre chez Yoto —
+ * une histoire publiee sur deux cartes MYO a deux contenus, et un identifiant perdu se retrouve
+ * ainsi.
+ */
+export function contentIdsFor(project: { card_id: string | null; title: string }): string[] {
+  const rows = db().prepare('SELECT card_id FROM cards WHERE title = ?').all(project.title) as {
+    card_id: string;
+  }[];
+  return [...new Set([project.card_id, ...rows.map((row) => row.card_id)].filter((id) => id !== null))];
+}
+
+/** Toutes les cartes qui portent l'une de ces histoires. */
+export function mergeHolders(all: Map<string, Holders>, cardIds: string[]): Holders {
+  return {
+    myo: cardIds.flatMap((id) => all.get(id)?.myo ?? []),
+    copies: cardIds.flatMap((id) => all.get(id)?.copies ?? []),
+  };
+}
+
+/**
+ * Rend son identifiant a une histoire publiee qui l'a perdu, quand un seul contenu porte son
+ * titre. (Retirer une carte du pool l'effacait, avant que le pool ne distingue les cartes MYO.)
+ */
+export function relinkByTitle(): void {
+  db().exec(`
+    UPDATE projects
+       SET card_id = (SELECT card_id FROM cards WHERE cards.title = projects.title)
+     WHERE card_id IS NULL AND state = 'published'
+       AND (SELECT count(*) FROM cards WHERE cards.title = projects.title) = 1
+  `);
+}
+
+/** Les noms des cartes qui portent un contenu, MYO et copies confondues, pour les afficher. */
+export function holderNames(holders: Holders | undefined): { names: string[]; anonymous: number } {
+  const copies = holders?.copies ?? [];
+  const names = [
+    ...(holders?.myo ?? []).map((name) => `« ${name} » (MYO)`),
+    ...copies.filter((tag) => tag.uid || tag.name).map((tag) => `« ${tagLabel(tag)} »`),
+  ];
+  return { names, anonymous: copies.filter((tag) => !tag.uid && !tag.name).length };
+}
+
+/** « « la bleue » (MYO), « la rouge » et 2 copies sans nom » — ou rien. */
+export function holdersSentence(holders: Holders | undefined): string {
+  const { names, anonymous } = holderNames(holders);
+  if (anonymous) names.push(`${anonymous} copie${anonymous > 1 ? 's' : ''} sans nom`);
+  return names.length < 2 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} et ${names.at(-1)}`;
 }

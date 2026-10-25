@@ -1,6 +1,17 @@
-/** Accueil : la bibliotheque de cartes. Un projet EST une carte, il n'y a qu'une liste. */
+/** Accueil : la bibliotheque des histoires, et les cartes sur lesquelles chacune se trouve. */
 import type { FastifyInstance } from 'fastify';
 
+import {
+  contentIdsFor,
+  holdersByContent,
+  holdersSentence,
+  listPool,
+  mergeHolders,
+  relinkByTitle,
+  rememberTitles,
+  type Holders,
+} from '../../db/cards.ts';
+import { listMyCards } from '../../yoto/api.ts';
 import { listProjectSummaries, type ProjectSummary } from '../../db/projects.ts';
 import { isConnected } from '../../yoto/oauth.ts';
 import { html, layout, raw } from '../html.ts';
@@ -16,13 +27,14 @@ const PALETTES: [string, string][] = [
   ['var(--sky)', 'var(--sky-ink)'],
 ];
 
-const ETATS: Record<string, string> = {
+/** Le nom de chaque etat de projet, tel que la bibliotheque et la fiche l'affichent. */
+export const ETATS: Record<string, string> = {
   draft: 'Brouillon',
   fetching: 'Téléchargement',
   segmenting: 'Découpage',
   reviewing: 'À valider',
   uploading: 'Envoi vers Yoto',
-  published: 'Sur la carte',
+  published: 'Publiée',
   failed: 'Échec',
 };
 
@@ -51,10 +63,11 @@ function tile(seed: number): string {
     .join('');
 }
 
-function storyCard(project: ProjectSummary, index: number) {
+function storyCard(project: ProjectSummary, index: number, holders: Holders | undefined) {
   const [fill, ink] = PALETTES[index % PALETTES.length]!;
   const published = project.state === 'published';
   const failed = project.state === 'failed';
+  const onCards = holdersSentence(holders);
 
   const meta = [
     `${project.track_count} piste${project.track_count > 1 ? 's' : ''}`,
@@ -81,7 +94,9 @@ function storyCard(project: ProjectSummary, index: number) {
       <div class="story-status">
         <span class="chip ${published ? '' : 'pale'}">${ETATS[project.state] ?? project.state}</span>
         <span class="story-when">
-          ${project.card_id ? html`<code>${project.card_id}</code>` : since(project.updated_at)}
+          ${published
+            ? onCards ? `Sur ${onCards}` : 'Sur aucune carte'
+            : since(project.updated_at)}
         </span>
       </div>
 
@@ -115,14 +130,14 @@ const ETAPES: [string, string, string][] = [
   [
     'var(--teal)',
     'Raconter',
-    'Lis les chapitres à voix haute au micro. Ta voix devient les pistes de la carte. ' +
+    'Lis les chapitres à voix haute au micro. Ta voix devient les pistes de l’histoire. ' +
       "Sinon, dépose des fichiers audio ou colle une adresse.",
   ],
   [
     'var(--grass)',
     'Publier',
-    'Choisis une carte, et son contenu est remplacé. Le tag NFC n’est jamais retouché : ' +
-      'une carte enrôlée une fois se reprogramme à volonté.',
+    'Publie l’histoire chez Yoto, puis mets-la sur une carte : une carte MYO se ' +
+      'reprogramme à volonté, une puce du commerce en reçoit une copie.',
   ],
 ];
 
@@ -168,15 +183,26 @@ export async function homeRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const connected = isConnected();
+    // Un contenu dont on ignore le titre (une carte MYO nommee avant qu'on retienne les titres)
+    // ne se rattache a aucune histoire : on demande une fois la bibliotheque a Yoto.
+    if (connected && listPool().some((card) => !card.title)) {
+      try {
+        rememberTitles(await listMyCards());
+      } catch {
+        // Sans Yoto, les histoires s'affichent quand meme, avec les cartes qu'on leur connait.
+      }
+    }
+    relinkByTitle();
     const projects = listProjectSummaries();
+    const holders = holdersByContent();
 
     return reply.type('text/html').send(
       layout(
-        { title: 'Cartes', nav: 'cards' },
+        { title: 'Histoires', nav: 'stories' },
         html`
           <section class="hero">
-            <h1>Vos cartes</h1>
-            <p>Une histoire, une image, et la carte est prête à être posée sur le lecteur.</p>
+            <h1>Tes histoires</h1>
+            <p>Chacune s'écoute sur une ou plusieurs cartes, posées sur le lecteur.</p>
             <span class="hero-actions">
               ${connected
                 ? html`
@@ -192,11 +218,13 @@ export async function homeRoutes(app: FastifyInstance): Promise<void> {
           </section>
 
           <div class="card-grid">
-            ${projects.map(storyCard)}
+            ${projects.map((project, index) =>
+              storyCard(project, index, mergeHolders(holders, contentIdsFor(project))),
+            )}
 
             <a class="new-card" href="${connected ? '/projets/nouveau' : '/auth/yoto/start'}">
               <span aria-hidden="true">${raw(PLUS_ICON)}</span>
-              Carte vierge
+              Nouvelle histoire
             </a>
           </div>
         `,

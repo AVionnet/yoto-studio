@@ -66,7 +66,7 @@
         verdict = nfc.problem(url
             ? 'Cette carte porte une adresse, mais pas une adresse Yoto : le lecteur l’ignorera.'
             : 'Cette carte ne porte pas d’adresse.',
-          'Réencode-la depuis « Encoder une carte vierge » : l’écriture remplace son contenu.');
+          'Réencode-la depuis « Fabriquer une carte » : l’écriture remplace son contenu.');
       }
       reportEl.innerHTML = verdict
         + chipTable(uid, records, url);
@@ -87,11 +87,12 @@
       var bad = identity.notes.some(function (note) { return note.kind === 'error'; });
       var name = identity.title ? '« ' + esc(identity.title) + ' »' : 'le contenu ' + esc(found.cardId);
       var head = '';
+      var card = identity.cardName ? 'la carte « ' + esc(identity.cardName) + ' » porte ' : '';
       if (identity.passeur) {
         head = nfc.verdict('ok', '<p><strong>C’est ton passeur.</strong> Il porte ' + name + '.</p>');
       } else if (!bad) {
         // Une copie porte la bonne adresse, mais ne joue que sur un lecteur qui a l'histoire.
-        head = nfc.verdict('ok', '<p><strong>Adresse correcte :</strong> ' + name + '.</p>'
+        head = nfc.verdict('ok', '<p><strong>Adresse correcte :</strong> ' + card + name + '.</p>'
           + '<p>Elle jouera sur un lecteur qui a déjà téléchargé l’histoire — pas dans l’app '
           + 'Yoto du téléphone.</p>') + nfc.chipWarning(uid);
       }
