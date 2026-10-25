@@ -80,6 +80,11 @@ export function tagsFor(cardId: string): CardTag[] {
     .all(cardId) as CardTag[];
 }
 
+/** Ce que nos registres disent d'une puce, reconnue a son uid. */
+export function findTag(uid: string): CardTag | undefined {
+  return db().prepare('SELECT * FROM card_tags WHERE uid = ?').get(uid) as CardTag | undefined;
+}
+
 /** Combien de cartes physiques portent chaque contenu, pour l'afficher dans le pool. */
 export function tagCounts(): Map<string, number> {
   const rows = db()

@@ -13,13 +13,31 @@ import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 
-const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'public', 'encoder.js');
+const PUBLIC = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'public');
+const COMMON = readFileSync(join(PUBLIC, 'nfc.js'), 'utf8');
+const ENCODER = readFileSync(join(PUBLIC, 'encoder.js'), 'utf8');
+const READER = readFileSync(join(PUBLIC, 'lecteur.js'), 'utf8');
 
-/** Les identifiants que la page /cartes/encoder expose au script. */
+/** Les identifiants que les pages /cartes/encoder et /cartes/verifier exposent aux scripts. */
 const IDS = [
-  'encodeur', 'indispo', 'lire', 'reprise', 'source', 'ecriture', 'ecrire', 'verrou', 'etat',
-  'resultat', 'source-verdict', 'source-card', 'source-size', 'source-token', 'connue',
+  'encodeur', 'indispo', 'chk-nfc', 'chk-perm', 'lire', 'lire-etat', 'lire-resultat', 'reprise',
+  'source', 'source-histoire', 'source-verdict', 'source-card', 'source-size', 'source-token',
+  'connue', 'ecriture', 'ecrire', 'verrou', 'etat', 'resultat',
+  'lecteur', 'scanner', 'rapport',
 ];
+
+/** Ce que POST /cartes/identifier renvoie pour CARD_URL. */
+const IDENTITY = {
+  cardId: 'AbC12',
+  title: 'Jack et le haricot magique',
+  chapters: ['Le marché', 'Le haricot', 'Le géant'],
+  library: 'ok',
+  project: { id: 1, title: 'Jack et le haricot magique' },
+  nickname: 'Jack',
+  chip: null,
+  notes: [],
+  tags: 1,
+};
 
 const CARD_URL = 'https://yoto.io/AbC12?fJ3kQ9vRtYs2LmNp';
 
@@ -66,30 +84,45 @@ const blankReading = (serialNumber: string) => ({ serialNumber, message: { recor
 
 interface Harness {
   el: Record<string, FakeElement>;
-  /** Ce que les prochains scans renverront, dans l'ordre. */
+  /** Ce que les prochains scans renverront, dans l'ordre. Une Error fait echouer le scan. */
   scans: unknown[];
   writes: { records: { recordType: string; data: string }[] }[];
   locks: number;
-  /** Tous les appels fetch du script, GET compris. */
+  /** Erreur a lever au prochain write(), le cas echeant. */
+  writeError: Error | undefined;
+  /** Les appels fetch du script, hors identification. */
   calls: { url: string; body: Record<string, string> }[];
-  /** Reponse du prochain fetch. */
+  /** Les adresses envoyees a /cartes/identifier. */
+  identified: { url: string; uid: string }[];
+  /** Reponse de /cartes/identifier. */
+  identity: Record<string, unknown>;
+  /** Reponse des autres fetch. */
   reply: Record<string, unknown>;
   settle(): Promise<void>;
 }
 
-function load(dataset: Record<string, string>): Harness {
+/** Une erreur telle que Web NFC la leve : un DOMException dont seul le nom compte. */
+const nfcError = (name: string, message = 'refusé'): Error =>
+  Object.assign(new Error(message), { name });
+
+function load(dataset: Record<string, string>, script = ENCODER, root = 'encodeur'): Harness {
   const el = Object.fromEntries(IDS.map((id) => [id, fakeElement()]));
-  Object.assign(el['encodeur']!.dataset, dataset);
+  Object.assign(el[root]!.dataset, dataset);
   el['connue']!.value = 'AbC12';
+  el['source']!.hidden = true;
+  el['ecriture']!.hidden = true;
 
   const harness: Harness = {
     el,
     scans: [],
     writes: [],
     locks: 0,
+    writeError: undefined,
     calls: [],
-    reply: { cardId: 'AbC12', nickname: 'Jack et le haricot magique', tags: 2 },
-    // Deux tours de boucle : le scan differe sa lecture, et la chaine de promesses suit.
+    identified: [],
+    identity: IDENTITY,
+    reply: { cardId: 'AbC12', nickname: 'Jack', tags: 2 },
+    // Plusieurs tours de boucle : le scan differe sa lecture, et la chaine de promesses suit.
     settle: () => new Promise((resolve) => setTimeout(resolve, 5)),
   };
 
@@ -102,14 +135,15 @@ function load(dataset: Record<string, string>): Harness {
 
     scan(): Promise<void> {
       const next = harness.scans.shift();
-      if (!next) {
-        return Promise.reject(Object.assign(new Error('aucune carte'), { name: 'NotReadableError' }));
-      }
-      setTimeout(() => (this.handlers['reading'] ?? []).forEach((fn) => fn(next)), 0);
+      if (!next) return Promise.reject(nfcError('NotReadableError', 'aucune carte'));
+      if (next instanceof Error) return Promise.reject(next);
+      const type = next === 'illisible' ? 'readingerror' : 'reading';
+      setTimeout(() => (this.handlers[type] ?? []).forEach((fn) => fn(next)), 0);
       return Promise.resolve();
     }
 
     write(message: { records: { recordType: string; data: string }[] }): Promise<void> {
+      if (harness.writeError) return Promise.reject(harness.writeError);
       harness.writes.push(message);
       return Promise.resolve();
     }
@@ -120,63 +154,113 @@ function load(dataset: Record<string, string>): Harness {
     }
   }
 
+  const window: Record<string, unknown> = { NDEFReader };
   const sandbox: Record<string, unknown> = {
-    window: { NDEFReader },
+    window,
     NDEFReader,
-    AbortController, URL, TextEncoder, TextDecoder, setTimeout, console,
+    AbortController, URL, TextEncoder, TextDecoder, setTimeout, clearTimeout, console, Date,
     document: { getElementById: (id: string) => el[id] ?? null },
     fetch: (url: string, options?: { body?: string }) => {
-      harness.calls.push({ url, body: options?.body ? JSON.parse(options.body) : {} });
-      return Promise.resolve({ ok: true, json: () => Promise.resolve(harness.reply) });
+      const body = options?.body ? JSON.parse(options.body) : {};
+      if (url === '/cartes/identifier') harness.identified.push(body);
+      else harness.calls.push({ url, body });
+      const answer = url === '/cartes/identifier' ? harness.identity : harness.reply;
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(answer) });
     },
   };
   sandbox['globalThis'] = sandbox;
 
   vm.createContext(sandbox);
-  vm.runInContext(readFileSync(SCRIPT, 'utf8'), sandbox);
+  vm.runInContext(COMMON, sandbox);
+  vm.runInContext(script, sandbox);
   return harness;
 }
 
-describe('relevé de la carte source', () => {
-  it('affiche le contenu, le jeton masqué et l’occupation sur la puce', async () => {
-    const h = load({ capacity: '48', targetCard: 'AbC12', projet: '1' });
+const TARGET = { capacity: '48', targetCard: 'AbC12', targetTitle: 'Jack et le haricot magique', projet: '1' };
+const FREE = { capacity: '48', targetCard: '', targetTitle: '', projet: '' };
+
+describe('relevé du passeur', () => {
+  it('affiche le titre de l’histoire et ses pistes, pas seulement l’identifiant', async () => {
+    const h = load(TARGET);
     h.scans.push(reading(CARD_URL, '04:a2:3b:11'));
 
     await h.el['lire']!.fire('click');
     await h.settle();
 
+    assert.deepEqual(h.identified, [{ url: CARD_URL, uid: '04:a2:3b:11' }]);
+    assert.match(h.el['source-histoire']!.innerHTML, /« Jack et le haricot magique »/);
+    assert.match(h.el['source-histoire']!.innerHTML, /<li>Le géant<\/li>/);
+    assert.match(h.el['source-histoire']!.innerHTML, /3 pistes/);
+    assert.match(h.el['source-verdict']!.innerHTML, /C’est bon/);
     assert.equal(h.el['source']!.hidden, false);
     assert.equal(h.el['ecriture']!.hidden, false);
-    assert.equal(h.el['source-card']!.textContent, 'AbC12');
     // 8 octets d'ossature NDEF + l'URL sans « https:// » : la meme arithmetique que tagBytes().
     assert.equal(h.el['source-size']!.textContent, '38 / 48 octets (10 libres)');
     assert.equal(h.el['source-token']!.className, 'masked');
-    assert.match(h.el['source-verdict']!.innerHTML, /Adresse relevée/);
   });
 
-  it('signale une carte qui porte un autre contenu que celui visé', async () => {
-    const h = load({ capacity: '48', targetCard: 'AbC12', projet: '1' });
+  it('nomme les deux histoires quand le passeur porte la mauvaise', async () => {
+    const h = load(TARGET);
+    h.identity = { ...IDENTITY, cardId: 'OTHER', title: 'Boucle d’or', chapters: [] };
     h.scans.push(reading('https://yoto.io/OTHER?tok', '04:11'));
 
     await h.el['lire']!.fire('click');
     await h.settle();
 
-    assert.match(h.el['source-verdict']!.innerHTML, /porte le contenu <code>OTHER<\/code>/);
+    assert.match(
+      h.el['source-verdict']!.innerHTML,
+      /Le passeur porte « Boucle d’or », pas « Jack et le haricot magique »/,
+    );
+    assert.match(h.el['source-verdict']!.innerHTML, /Comment corriger/);
   });
 
-  it('explique qu’une puce vierge n’a rien à recopier', async () => {
-    const h = load({ capacity: '48', targetCard: '', projet: '' });
+  it('relaie les problèmes trouvés par le serveur, avec leur correction', async () => {
+    const h = load(FREE);
+    h.identity = {
+      ...IDENTITY,
+      title: null,
+      chapters: [],
+      library: 'introuvable',
+      notes: [{ kind: 'error', text: 'Le contenu AbC12 n’existe pas', fix: 'Relie-le dans l’app' }],
+    };
+    h.scans.push(reading(CARD_URL, '04:11'));
+
+    await h.el['lire']!.fire('click');
+    await h.settle();
+
+    assert.match(h.el['source-histoire']!.innerHTML, /Histoire inconnue/);
+    assert.doesNotMatch(h.el['source-verdict']!.innerHTML, /C’est bon/);
+    assert.match(h.el['source-verdict']!.innerHTML, /n’existe pas[\s\S]*Comment corriger :<\/strong> Relie-le/);
+  });
+
+  it('affiche l’erreur de lecture à l’étape 2, là où on la voit', async () => {
+    const h = load(FREE);
+    h.scans.push(nfcError('NotAllowedError'));
+
+    await h.el['lire']!.fire('click');
+    await h.settle();
+
+    // Avant, l'erreur partait dans le panneau d'ecriture — encore masque a ce stade.
+    assert.match(h.el['lire-resultat']!.innerHTML, /Chrome n’a pas le droit d’utiliser le NFC/);
+    assert.match(h.el['lire-resultat']!.innerHTML, /Appareils NFC → Autoriser/);
+    assert.match(h.el['lire-resultat']!.innerHTML, /NotAllowedError — refusé/);
+    assert.equal(h.el['lire']!.disabled, false);
+  });
+
+  it('explique qu’une puce vide n’est pas le passeur', async () => {
+    const h = load(FREE);
     h.scans.push(blankReading('04:22'));
 
     await h.el['lire']!.fire('click');
     await h.settle();
 
     assert.equal(h.el['source']!.hidden, true);
-    assert.match(h.el['resultat']!.innerHTML, /ne porte pas d'adresse Yoto/);
+    assert.match(h.el['lire-resultat']!.innerHTML, /Cette carte est vide/);
+    assert.equal(h.identified.length, 0);
   });
 
   it('refuse d’écrire une adresse qui dépasse la capacité de la puce', async () => {
-    const h = load({ capacity: '48', targetCard: '', projet: '' });
+    const h = load(FREE);
     h.scans.push(reading(`https://yoto.io/AbC12?${'x'.repeat(48)}`, '04:33'));
 
     await h.el['lire']!.fire('click');
@@ -187,7 +271,7 @@ describe('relevé de la carte source', () => {
   });
 
   it('reprend une adresse déjà relevée sans repasser par le tag', async () => {
-    const h = load({ capacity: '48', targetCard: 'AbC12', projet: '1' });
+    const h = load(TARGET);
     h.reply = { url: CARD_URL };
 
     await h.el['reprise']!.fire('submit');
@@ -195,19 +279,25 @@ describe('relevé de la carte source', () => {
 
     assert.equal(h.calls[0]?.url, '/cartes/AbC12/adresse');
     assert.equal(h.el['source-card']!.textContent, 'AbC12');
+    assert.match(h.el['source-histoire']!.innerHTML, /Jack et le haricot magique/);
   });
 });
 
+/** Releve le passeur, puis ecrit : le parcours complet jusqu'au message final. */
+async function readThenWrite(h: Harness): Promise<void> {
+  await h.el['lire']!.fire('click');
+  await h.settle();
+  await h.el['ecrire']!.fire('click');
+  await h.settle();
+  await h.settle();
+}
+
 describe('écriture sur la carte vierge', () => {
-  it('écrit l’URL, relit la puce, puis enregistre son uid', async () => {
-    const h = load({ capacity: '48', targetCard: 'AbC12', projet: '1' });
+  it('écrit l’URL, relit la puce, enregistre son uid et nomme l’histoire', async () => {
+    const h = load(TARGET);
     h.scans.push(reading(CARD_URL, '04:a2:3b:11'), reading(CARD_URL, '04:ff:ff:99'));
 
-    await h.el['lire']!.fire('click');
-    await h.settle();
-    await h.el['ecrire']!.fire('click');
-    await h.settle();
-    await h.settle();
+    await readThenWrite(h);
 
     assert.equal(
       JSON.stringify(h.writes),
@@ -220,56 +310,134 @@ describe('écriture sur la carte vierge', () => {
         { url: '/cartes/encoder', body: { url: CARD_URL, uid: '04:ff:ff:99', projet: '1' } },
       ]),
     );
-    assert.match(h.el['resultat']!.innerHTML, /Carte encodée/);
+    assert.match(h.el['resultat']!.innerHTML, /Carte encodée et vérifiée/);
+    assert.match(h.el['resultat']!.innerHTML, /« Jack et le haricot magique »/);
+  });
+
+  it('reconnaît le passeur réécrit à la place de la vierge, et n’enregistre rien', async () => {
+    const h = load(TARGET);
+    h.scans.push(reading(CARD_URL, '04:a2'), reading(CARD_URL, '04:a2'));
+
+    await readThenWrite(h);
+
+    assert.equal(h.calls.length, 0);
+    assert.match(h.el['resultat']!.innerHTML, /C’est le passeur qui a été réécrit/);
+    assert.match(h.el['resultat']!.innerHTML, /Éloigne-le/);
   });
 
   it('ne verrouille la puce que si la case est cochée', async () => {
-    const h = load({ capacity: '48', targetCard: 'AbC12', projet: '1' });
+    const h = load(TARGET);
     h.scans.push(reading(CARD_URL, '04:a2'), reading(CARD_URL, '04:ff'));
 
-    await h.el['lire']!.fire('click');
-    await h.settle();
-    await h.el['ecrire']!.fire('click');
-    await h.settle();
+    await readThenWrite(h);
     assert.equal(h.locks, 0);
 
     h.scans.push(reading(CARD_URL, '04:bb'), reading(CARD_URL, '04:cc'));
     h.el['verrou']!.checked = true;
-    await h.el['lire']!.fire('click');
-    await h.settle();
-    await h.el['ecrire']!.fire('click');
-    await h.settle();
-    await h.settle();
+    await readThenWrite(h);
     assert.equal(h.locks, 1);
   });
 
   it('garde la trace de l’encodage même quand la relecture échoue', async () => {
-    const h = load({ capacity: '48', targetCard: 'AbC12', projet: '1' });
+    const h = load(TARGET);
     h.scans.push(reading(CARD_URL, '04:a2:3b:11')); // rien pour la vérification
 
-    await h.el['lire']!.fire('click');
-    await h.settle();
-    await h.el['ecrire']!.fire('click');
-    await h.settle();
-    await h.settle();
+    await readThenWrite(h);
 
     assert.equal(h.writes.length, 1);
     assert.equal(h.calls.at(-1)?.body['uid'], '');
-    assert.match(h.el['resultat']!.innerHTML, /Vérification impossible/);
+    assert.match(h.el['resultat']!.innerHTML, /pas vérifiée/);
+    assert.match(h.el['resultat']!.innerHTML, /Lire une carte/);
   });
 
   it('refuse un relevé qui ne correspond pas à ce qui a été écrit', async () => {
-    const h = load({ capacity: '48', targetCard: 'AbC12', projet: '1' });
+    const h = load(TARGET);
     h.scans.push(reading(CARD_URL, '04:a2'), reading('https://yoto.io/WRONG?x', '04:ff'));
 
-    await h.el['lire']!.fire('click');
-    await h.settle();
-    await h.el['ecrire']!.fire('click');
-    await h.settle();
-    await h.settle();
+    await readThenWrite(h);
 
     assert.equal(h.calls.length, 0, 'rien ne doit être enregistré si la relecture diffère');
-    assert.match(h.el['resultat']!.innerHTML, /ne renvoie pas l'adresse écrite/);
+    assert.match(h.el['resultat']!.innerHTML, /ne porte pas l’adresse qui vient d’être écrite/);
+    assert.doesNotMatch(h.el['resultat']!.innerHTML, /\?x/, 'le jeton relu reste masqué');
+  });
+
+  it('traduit un échec d’écriture en geste à faire', async () => {
+    const h = load(TARGET);
+    h.scans.push(reading(CARD_URL, '04:a2'));
+    h.writeError = nfcError('NotSupportedError');
+
+    await readThenWrite(h);
+
+    assert.match(h.el['resultat']!.innerHTML, /n’est pas formatée NDEF/);
+    assert.match(h.el['resultat']!.innerHTML, /Si ça bloque/);
+    assert.equal(h.el['ecrire']!.disabled, false);
+  });
+});
+
+describe('lecture et vérification d’une carte', () => {
+  const loadReader = () => load({ capacity: '48' }, READER, 'lecteur');
+
+  it('affiche l’histoire jouée par une carte valide', async () => {
+    const h = loadReader();
+    h.scans.push(reading(CARD_URL, '04:a2'));
+
+    await h.el['scanner']!.fire('click');
+    await h.settle();
+
+    assert.deepEqual(h.identified, [{ url: CARD_URL, uid: '04:a2' }]);
+    assert.match(h.el['rapport']!.innerHTML, /Carte valide/);
+    assert.match(h.el['rapport']!.innerHTML, /« Jack et le haricot magique »/);
+    assert.match(h.el['rapport']!.innerHTML, /04:a2/);
+    assert.doesNotMatch(h.el['rapport']!.innerHTML, /fJ3kQ9/, 'le jeton reste masqué');
+  });
+
+  it('ne déclare pas valide une carte dont le contenu est introuvable', async () => {
+    const h = loadReader();
+    h.identity = {
+      ...IDENTITY,
+      title: null,
+      chapters: [],
+      notes: [{ kind: 'error', text: 'introuvable', fix: 'relie-la' }],
+    };
+    h.scans.push(reading(CARD_URL, '04:a2'));
+
+    await h.el['scanner']!.fire('click');
+    await h.settle();
+
+    assert.doesNotMatch(h.el['rapport']!.innerHTML, /Carte valide/);
+    assert.match(h.el['rapport']!.innerHTML, /introuvable[\s\S]*relie-la/);
+  });
+
+  it('signale une puce vide comme prête à encoder', async () => {
+    const h = loadReader();
+    h.scans.push(blankReading('04:22'));
+
+    await h.el['scanner']!.fire('click');
+    await h.settle();
+
+    assert.match(h.el['rapport']!.innerHTML, /Carte vide/);
+    assert.equal(h.identified.length, 0);
+  });
+
+  it('explique une puce détectée mais illisible', async () => {
+    const h = loadReader();
+    h.scans.push('illisible');
+
+    await h.el['scanner']!.fire('click');
+    await h.settle();
+
+    assert.match(h.el['rapport']!.innerHTML, /Chrome ne lit pas son contenu/);
+  });
+
+  it('montre l’erreur de scan et sa correction', async () => {
+    const h = loadReader();
+    h.scans.push(nfcError('NotReadableError'));
+
+    await h.el['scanner']!.fire('click');
+    await h.settle();
+
+    assert.match(h.el['rapport']!.innerHTML, /NFC du téléphone est indisponible/);
+    assert.match(h.el['rapport']!.innerHTML, /Comment corriger/);
   });
 });
 
@@ -282,10 +450,12 @@ describe('navigateur sans Web NFC', () => {
     };
     sandbox['globalThis'] = sandbox;
     vm.createContext(sandbox);
-    vm.runInContext(readFileSync(SCRIPT, 'utf8'), sandbox);
+    vm.runInContext(COMMON, sandbox);
+    vm.runInContext(ENCODER, sandbox);
 
     assert.equal(el['indispo']!.hidden, false);
     assert.equal(el['lire']!.disabled, true);
     assert.equal(el['ecrire']!.disabled, true);
+    assert.match(el['chk-nfc']!.innerHTML, /Web NFC absent/);
   });
 });

@@ -210,7 +210,8 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
               contenu sur une puce NFC Ultralight EV1 de 48 octets, celles vendues par lots.
             </p>
             <p>
-              <a href="/static/spike-nfc.html">Sonde NFC</a> — lire ce que porte une carte.
+              <a href="/cartes/verifier">Lire une carte</a> — vérifier ce que porte une carte et
+              quelle histoire elle joue.
             </p>
             <p class="muted">
               Les deux demandent Web NFC : Chrome sur Android, en HTTPS.

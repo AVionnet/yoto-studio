@@ -41,8 +41,13 @@ seule carte officielle suffit donc, comme **passeur**.
 
 1. Publier le projet ici : Yoto crée le contenu et son `cardId`.
 2. Dans l'app Yoto, « Link to a card » sur le passeur.
-3. `/cartes/encoder` relève le passeur, recopie son adresse sur la vierge, et relit pour vérifier.
+3. `/cartes/encoder` relève le passeur, affiche l'histoire qu'il porte, recopie son adresse sur la
+   vierge, et relit pour vérifier.
 4. Le passeur redevient libre pour le contenu suivant ; la vierge garde le sien pour de bon.
+
+`/cartes/verifier` lit n'importe quelle carte et dit quelle histoire elle joue ; chaque erreur
+(NFC refusé, puce non formatée, passeur réécrit à la place de la vierge…) s'affiche avec sa
+correction.
 
 La vierge rejoint le pool avec son adresse : elle se republie ensuite par l'API, sans NFC ni app.
 La même adresse recopiée sur deux puces donne deux jumelles, qui jouent la même chose — de quoi
