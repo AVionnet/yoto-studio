@@ -136,8 +136,8 @@ const ETAPES: [string, string, string][] = [
   [
     'var(--grass)',
     'Publier',
-    'Publie l’histoire chez Yoto, puis mets-la sur une carte : une carte MYO se ' +
-      'reprogramme à volonté, une puce du commerce en reçoit une copie.',
+    'Publie l’histoire chez Yoto, puis copie-la sur une puce du commerce : elle change ' +
+      'd’histoire autant de fois qu’on veut.',
   ],
 ];
 
@@ -183,8 +183,8 @@ export async function homeRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const connected = isConnected();
-    // Un contenu dont on ignore le titre (une carte MYO nommee avant qu'on retienne les titres)
-    // ne se rattache a aucune histoire : on demande une fois la bibliotheque a Yoto.
+    // Un contenu dont on ignore le titre (connu avant qu'on retienne les titres) ne se rattache
+    // a aucune histoire : on demande une fois la bibliotheque a Yoto.
     if (connected && listPool().some((card) => !card.title)) {
       try {
         rememberTitles(await listMyCards());

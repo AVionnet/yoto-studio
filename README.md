@@ -20,15 +20,16 @@ carte MYO et l'imprimer. Application personnelle, non affiliée à Yoto.
 | **Décorer** | Étiquette PNG à imprimer puis découper à la Cricut, aux dimensions de la carte |
 | **Écouter** | Émulateur de lecteur, avec streaming et déplacement dans la piste |
 
-## Le pool de cartes
+## Histoires et cartes
 
-Une carte Yoto porte un unique enregistrement NDEF : `https://yoto.io/<cardId>?<token>`. Le token
-est frappé par le serveur et n'est pas forgeable hors-ligne, donc **relier une carte reste manuel,
-une seule fois dans sa vie**, depuis l'app Yoto.
+Une **histoire** est ce qu'on écoute : elle vit chez Yoto sous un identifiant de contenu
+(`cardId`). Une **carte** est ce qu'on pose sur le lecteur : ici, une copie sur une puce du
+commerce, qui porte `https://yoto.io/<cardId>?<token>`. Une histoire peut être sur plusieurs
+cartes, et une carte change d'histoire en la réécrivant.
 
-Mais le token est lié au `cardId`, pas à la carte physique — et `POST /content` avec un `cardId`
-existant met à jour le contenu. Une carte enrôlée se reprogramme donc indéfiniment par l'API, sans
-jamais toucher au tag.
+Republier une histoire met à jour son contenu : les copies qui portent son adresse jouent la
+nouvelle version sans être réécrites. Les copies se nomment (« la rouge ») depuis la page Cartes
+ou en les lisant ; Réglages resynchronise les contenus avec le compte Yoto.
 
 ## Encoder des cartes vierges
 
@@ -57,8 +58,6 @@ Une carte déjà formatée est lue avant d'être écrite, et change d'histoire e
 **Limite d'une copie.** Yoto ne connaît pas l'uid d'une puce vierge : le serveur la refuse, et l'app
 du téléphone affiche « Échec de lecture ». Une copie ne joue que sur un **lecteur** qui a déjà
 téléchargé l'histoire en entier (via le passeur), et il faut recommencer après chaque republication.
-Pour une carte reconnue partout, mieux vaut une carte MYO officielle : l'appli la reprogramme à
-l'infini par l'API, sans NFC ni app.
 
 Web NFC oblige : **Chrome sur Android, en HTTPS**. Prendre la variante **48 octets** (MF0UL11) ;
 celle de 128 octets se formate autrement. Une puce sortie d'usine sans en-tête NDEF se formate une

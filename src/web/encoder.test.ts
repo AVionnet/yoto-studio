@@ -468,7 +468,41 @@ describe('lecture et vérification d’une carte', () => {
     assert.match(report, /Adresse correcte :<\/strong> « Jack et le haricot magique »/);
     assert.match(report, /pas dans l’app Yoto du téléphone/);
     assert.match(report, /<li>Le géant<\/li>/);
+    assert.match(report, /href="\/projets\/1">Ouvrir l’histoire/);
     assert.doesNotMatch(report, /fJ3kQ9/, 'le jeton reste masqué');
+  });
+
+  it('propose de nommer une puce inconnue, sans exposer le jeton', async () => {
+    const report = await readCard(loadReader(), reading(CARD_URL, BLANK));
+
+    assert.match(report, /data-uid="04:11:22:33:44:55:90" data-card="AbC12"/);
+    assert.match(report, /Nommer et garder/);
+    assert.doesNotMatch(report, /fJ3kQ9/);
+  });
+
+  it('enregistre le nom donné à la puce lue', async () => {
+    const h = loadReader();
+    await readCard(h, reading(CARD_URL, BLANK));
+    const form = {
+      dataset: { uid: BLANK, card: 'AbC12' },
+      elements: { name: { value: ' la rouge ' } },
+      outerHTML: '',
+      insertAdjacentHTML() {},
+    };
+    await h.el['rapport']!.fire('submit', { target: form, preventDefault() {} });
+    await h.settle();
+
+    assert.deepEqual(h.posts.at(-1), {
+      url: '/cartes/copies',
+      body: { uid: BLANK, cardId: 'AbC12', name: 'la rouge' },
+    });
+    assert.match(form.outerHTML, /Carte nommée <strong>« la rouge »/);
+  });
+
+  it('ne propose pas de nommer le passeur', async () => {
+    const h = loadReader();
+    h.replies['/cartes/identifier'] = { ...IDENTITY, passeur: true };
+    assert.doesNotMatch(await readCard(h, reading(CARD_URL, PASSEUR)), /data-uid=/);
   });
 
   it('reconnaît le passeur', async () => {

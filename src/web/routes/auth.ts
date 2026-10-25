@@ -10,6 +10,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 
 import { config } from '../../config.ts';
 import { authorizeUrl, createPkcePair, createState, disconnect, exchangeCode } from '../../yoto/oauth.ts';
+import type { SyncReport } from '../../db/cards.ts';
 import { html, layout } from '../html.ts';
 
 declare module 'fastify' {
@@ -19,6 +20,8 @@ declare module 'fastify' {
     oauthState?: string;
     /** Jeton a usage unique du formulaire de fabrication, contre la double soumission. */
     formToken?: string;
+    /** Compte rendu de la derniere synchronisation, affiche une fois apres la redirection. */
+    syncReport?: SyncReport | { error: string };
   }
 }
 

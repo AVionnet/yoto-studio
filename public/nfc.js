@@ -200,12 +200,15 @@
       ? '« ' + esc(identity.title) + ' »'
       : '<em>Histoire inconnue</em>';
     var chapters = identity.chapters || [];
-    var meta = ['<code>' + esc(identity.cardId) + '</code>'];
-    if (chapters.length) meta.push(chapters.length + ' piste' + (chapters.length > 1 ? 's' : ''));
-    if (identity.tags) meta.push(identity.tags + ' carte(s) encodée(s)');
-    if (identity.project) {
-      meta.push('<a href="/projets/' + identity.project.id + '">voir le projet</a>');
-    }
+    var meta = [];
+    if (chapters.length) meta.push(chapters.length + ' chapitre' + (chapters.length > 1 ? 's' : ''));
+    if (identity.tags) meta.push(identity.tags + ' copie' + (identity.tags > 1 ? 's' : ''));
+    meta.push('<code>' + esc(identity.cardId) + '</code>');
+    var project = identity.project;
+    var cover = project && project.cover
+      ? '<div class="icon-tile" aria-hidden="true"><img class="photo" src="' + esc(project.cover)
+        + '" alt=""></div>'
+      : '';
     var list = chapters.slice(0, MAX_CHAPTERS).map(function (chapter) {
       return '<li>' + esc(chapter) + '</li>';
     }).join('');
@@ -213,9 +216,14 @@
       ? '<li class="muted">… et ' + (chapters.length - MAX_CHAPTERS) + ' autres</li>'
       : '';
     return '<div class="story">'
+      + '<div class="story-head">' + cover + '<div>'
       + '<p class="story-title">' + title + '</p>'
       + '<p class="story-meta">' + meta.join(' · ') + '</p>'
+      + '</div></div>'
       + (list ? '<ol class="story-chapters">' + list + more + '</ol>' : '')
+      + (project
+        ? '<p><a class="button" href="/projets/' + project.id + '">Ouvrir l’histoire</a></p>'
+        : '')
       + '</div>';
   }
 

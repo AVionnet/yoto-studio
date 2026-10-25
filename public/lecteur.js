@@ -1,7 +1,8 @@
 /* Lire et vérifier une carte : ce que porte la puce, l'histoire qu'elle joue, ce qui cloche.
 
    Le scan reste ouvert : on pose les cartes l'une après l'autre, chacune remplace le rapport de
-   la précédente. Rien n'est écrit, ni sur la puce ni côté serveur. */
+   la précédente. Rien n'est écrit sur la puce ; on peut seulement lui donner un nom, ce qui
+   l'ajoute aux copies si on ne la connaissait pas. */
 (function () {
   var root = document.getElementById('lecteur');
   var nfc = window.YotoNfc;
@@ -32,6 +33,39 @@
   function waiting() {
     say('Pose une carte à plat contre le dos du téléphone…', true);
   }
+
+  /* Nommer la puce qu'on tient : « la rouge ». Le passeur et une puce sans numéro ne se nomment
+     pas ici — l'un se gère à part, l'autre ne se distingue pas. */
+  function nameForm(identity, uid) {
+    if (!uid || identity.passeur) return '';
+    var known = Boolean(identity.chip);
+    return '<form class="inline name-chip" data-uid="' + esc(uid) + '" data-card="' + esc(identity.cardId) + '">'
+      + '<input name="name" maxlength="60" required placeholder="Nom de cette carte" '
+      + 'aria-label="Nom de cette carte" value="' + esc(known ? identity.cardName || '' : '') + '">'
+      + '<button type="submit">' + (known ? 'Renommer' : 'Nommer et garder') + '</button></form>'
+      + (known ? '' : '<p class="muted">Cette puce n’est pas encore dans tes copies : la nommer '
+        + 'l’y ajoute.</p>');
+  }
+
+  reportEl.addEventListener('submit', function (event) {
+    var form = event.target;
+    if (!form || !form.dataset || !form.dataset.uid) return;
+    event.preventDefault();
+    var name = form.elements.name.value.trim();
+    fetch('/cartes/copies', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ uid: form.dataset.uid, cardId: form.dataset.card, name: name }),
+    }).then(function (response) {
+      return response.json().then(function (body) {
+        if (!response.ok) throw new Error(body.error || 'Le serveur a refusé.');
+        form.outerHTML = nfc.verdict('ok', '<p>Carte nommée <strong>« ' + esc(name) + ' »</strong>.</p>');
+      });
+    }).catch(function (error) {
+      form.insertAdjacentHTML('afterend', nfc.problem('Le nom n’a pas été enregistré.',
+        'Réessaie dans un instant.', error.message));
+    });
+  });
 
   function chipTable(uid, records, url) {
     var found = url ? nfc.parseYoto(url) : null;
@@ -96,8 +130,8 @@
           + '<p>Elle jouera sur un lecteur qui a déjà téléchargé l’histoire — pas dans l’app '
           + 'Yoto du téléphone.</p>') + nfc.chipWarning(uid);
       }
-      reportEl.innerHTML = head + nfc.story(identity) + nfc.notes(identity.notes) + extra
-        + chipTable(uid, records, url);
+      reportEl.innerHTML = head + nfc.story(identity) + nameForm(identity, uid)
+        + nfc.notes(identity.notes) + extra + chipTable(uid, records, url);
     }).catch(function (error) {
       if (last.uid !== uid) return;
       reportEl.innerHTML = nfc.verdict('ok', '<p>Adresse Yoto <code>' + esc(found.cardId)

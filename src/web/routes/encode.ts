@@ -19,6 +19,7 @@
 import type { FastifyInstance } from 'fastify';
 
 import {
+  contentIdsFor,
   findByCardId,
   findTag,
   forgetPasseur,
@@ -30,7 +31,12 @@ import {
   setPasseur,
   tagsFor,
 } from '../../db/cards.ts';
-import { findProjectByCard, getProject, setProjectCard } from '../../db/projects.ts';
+import {
+  findProjectByCard,
+  findProjectByTitle,
+  getProject,
+  setProjectCard,
+} from '../../db/projects.ts';
 import { type CardFacts, type Identity, identify } from '../../nfc/identify.ts';
 import { FORMAT_COMMANDS, TAG_CAPACITY, fits, parseYotoUrl, tagBytes } from '../../nfc/ndef.ts';
 import { getCard, listMyCards } from '../../yoto/api.ts';
@@ -321,17 +327,21 @@ async function lookUp(
 /** Tout ce que l'on sait d'une adresse relevee, mis en phrases par identify(). */
 async function identityFor(url: string, cardId: string, uid: string | undefined): Promise<Identity> {
   const tag = uid ? findTag(uid) : undefined;
-  const project = findProjectByCard(cardId);
   const pool = findByCardId(cardId);
+  // Une histoire publiee deux fois, ou qui a perdu son identifiant, se retrouve par son titre.
+  const project =
+    findProjectByCard(cardId) ?? (pool?.title ? findProjectByTitle(pool.title) : undefined);
   return identify({
     cardId,
     url,
     ...(await lookUp(cardId)),
     passeur: Boolean(uid) && uid === getPasseur(),
-    // Une puce inconnue qui porte le contenu d'une carte MYO nommee est, a priori, cette carte.
-    cardName: tag ? tag.name : pool?.myo ? pool.nickname : null,
-    project: project ? { id: project.id, title: project.title } : undefined,
-    pool: pool ? { nickname: pool.nickname, ndefUrl: pool.ndef_url } : undefined,
+    cardName: tag?.name ?? null,
+    project: project
+      ? { id: project.id, title: project.title, cover: project.cover_url }
+      : undefined,
+    // Le titre retenu passe avant le surnom technique (« carte xxx »).
+    pool: pool ? { nickname: pool.title ?? pool.nickname, ndefUrl: pool.ndef_url } : undefined,
     chip: tag
       ? {
           cardId: tag.card_id,
@@ -356,14 +366,26 @@ async function storiesWithAddress(): Promise<Story[]> {
       // Sans la bibliotheque, les surnoms du pool suffisent a choisir.
     }
   }
-  return listPool()
+  const stories = listPool()
     .filter((card) => card.ndef_url)
     .map((card) => ({
       cardId: card.card_id,
-      title: titles.get(card.card_id) ?? findProjectByCard(card.card_id)?.title ?? card.nickname,
+      // Le titre retenu en base sert quand Yoto ne repond pas ; le surnom (« carte xxx ») en
+      // dernier recours seulement.
+      title:
+        titles.get(card.card_id) ??
+        card.title ??
+        findProjectByCard(card.card_id)?.title ??
+        card.nickname,
       copies: tagsFor(card.card_id).length,
     }))
     .sort((a, b) => a.title.localeCompare(b.title, 'fr'));
+  // Une histoire publiee deux fois a deux adresses du meme titre : seul l'identifiant les departage.
+  return stories.map((story) =>
+    stories.filter((other) => other.title === story.title).length > 1
+      ? { ...story, title: `${story.title} (version ${story.cardId})` }
+      : story,
+  );
 }
 
 const yotoUrlOf = (body: { url?: string | undefined } | undefined) => {
@@ -382,13 +404,14 @@ export async function encodeRoutes(app: FastifyInstance): Promise<void> {
     const project = Number.isInteger(projectId) ? getProject(projectId) : undefined;
     const stories = await storiesWithAddress();
 
-    // Le cardId d'un projet n'est pas toujours stocke (card_id null) ; on le retrouve alors par
-    // son titre dans la liste des histoires connues, tant que ce titre est sans ambiguite.
-    let targetCardId = project?.card_id ?? undefined;
-    if (!targetCardId && project) {
-      const byTitle = stories.filter((story) => story.title === project.title);
-      if (byTitle.length === 1) targetCardId = byTitle[0]!.cardId;
-    }
+    // L'histoire peut avoir plusieurs contenus (publiee deux fois) ou avoir perdu le sien : on
+    // vise celui dont l'adresse est relevee, en preferant celui qui a deja le plus de copies.
+    const candidates = project
+      ? stories
+          .filter((story) => contentIdsFor(project).includes(story.cardId))
+          .sort((a, b) => b.copies - a.copies)
+      : [];
+    const targetCardId = candidates[0]?.cardId ?? project?.card_id ?? undefined;
     // Venir d'un projet pose toujours une cible (pour nommer l'histoire) ; le cardId peut rester
     // indéterminé, auquel cas la page oriente vers le relevé plutôt que d'en présélectionner une.
     const target = project

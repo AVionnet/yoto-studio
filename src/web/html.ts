@@ -100,6 +100,7 @@ export function layout(options: LayoutOptions, body: Html): string {
 <body>
 ${options.bare ? '' : header}
 <main${options.bare ? ' class="centered"' : ''}>${body.__html}</main>
+<script src="/static/loader.js"></script>
 </body>
 </html>`;
 }

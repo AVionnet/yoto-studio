@@ -6,13 +6,10 @@ PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 
 -- Les contenus Yoto connus : un par histoire publiee, ou releve sur le passeur.
--- Une ligne marquee `myo` est aussi une carte MYO officielle que l'on possede et que l'on a
--- nommee : elle reste liee a ce contenu, et publier dessus change l'histoire qu'elle joue.
 CREATE TABLE IF NOT EXISTS cards (
   id                 INTEGER PRIMARY KEY,
   card_id            TEXT NOT NULL UNIQUE,      -- identifiant Yoto, 5 caracteres
-  nickname           TEXT NOT NULL,             -- nom de la carte MYO (« la bleue »), sinon le titre
-  myo                INTEGER NOT NULL DEFAULT 0,-- 1 : une carte MYO physique porte ce contenu
+  nickname           TEXT NOT NULL,             -- surnom historique, le plus souvent le titre
   title              TEXT,                      -- titre de l'histoire chez Yoto, quand on l'a vu
   ndef_url           TEXT,                      -- relevee par Web NFC ; sert a encoder une vierge
   track_count        INTEGER NOT NULL DEFAULT 0,-- pour verifier la limite de 100

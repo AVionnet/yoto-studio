@@ -19,11 +19,11 @@ export interface CardFacts {
   /** Message brut quand la bibliotheque n'a pas repondu. */
   libraryError?: string | undefined;
   remote?: { title: string; chapters: string[] } | undefined;
-  project?: { id: number; title: string } | undefined;
+  project?: { id: number; title: string; cover?: string | null } | undefined;
   pool?: { nickname: string; ndefUrl: string | null } | undefined;
   /** Vrai si la puce lue est le passeur enregistre. */
   passeur?: boolean | undefined;
-  /** Le nom donne a cette carte : une copie nommee, ou la carte MYO liee a ce contenu. */
+  /** Le nom donne a cette copie, quand elle est connue et nommee. */
   cardName?: string | null | undefined;
   /** Ce que le registre dit de cette puce precise, si son uid est connu. */
   chip?: { cardId: string; writtenAt: string; title?: string | undefined } | undefined;
@@ -42,7 +42,7 @@ export interface Identity {
   title: string | null;
   chapters: string[];
   library: LibraryState;
-  project: { id: number; title: string } | null;
+  project: { id: number; title: string; cover?: string | null } | null;
   nickname: string | null;
   passeur: boolean;
   cardName: string | null;

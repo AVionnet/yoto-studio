@@ -2,8 +2,8 @@
  * Les cartes et les contenus qu'elles portent.
  *
  * Une histoire vit chez Yoto sous un identifiant de contenu (`card_id`). Une carte est l'objet
- * qu'on pose sur le lecteur : une carte MYO officielle, liee une fois a un contenu dans l'app
- * Yoto, ou une copie sur une puce du commerce, qui porte l'adresse d'un contenu.
+ * qu'on pose sur le lecteur : ici, une copie sur une puce du commerce, qui porte l'adresse d'un
+ * contenu. Seul le passeur, la carte MYO officielle, sert a relever ces adresses.
  */
 import { db, deleteSetting, getSetting, setSetting } from './index.ts';
 
@@ -11,8 +11,6 @@ export interface PoolCard {
   id: number;
   card_id: string;
   nickname: string;
-  /** 1 si une carte MYO physique, nommee par nous, porte ce contenu. */
-  myo: number;
   /** Le titre de l'histoire chez Yoto, quand on l'a vu passer. */
   title: string | null;
   ndef_url: string | null;
@@ -50,27 +48,6 @@ export function enroll(cardId: string, nickname: string, ndefUrl?: string): void
              updated_at = excluded.updated_at`,
     )
     .run(cardId, nickname.trim(), ndefUrl ?? null);
-}
-
-/** Les cartes MYO officielles qu'on possede, chacune liee a un contenu. */
-export function listMyoCards(): PoolCard[] {
-  return db()
-    .prepare('SELECT * FROM cards WHERE myo = 1 ORDER BY nickname COLLATE NOCASE')
-    .all() as PoolCard[];
-}
-
-/** Nomme la carte MYO qui porte ce contenu : « la bleue ». */
-export function nameMyoCard(cardId: string, name: string): void {
-  enroll(cardId, name);
-  db().prepare('UPDATE cards SET myo = 1 WHERE card_id = ?').run(cardId);
-}
-
-/**
- * Ce contenu n'est plus sur une carte MYO qu'on possede. La ligne reste : l'histoire qui le
- * publie doit garder son identifiant, et son adresse relevee reste utile aux copies.
- */
-export function forgetMyoCard(cardId: string): void {
-  db().prepare('UPDATE cards SET myo = 0 WHERE card_id = ?').run(cardId);
 }
 
 export function unenroll(cardId: string): void {
@@ -135,6 +112,34 @@ export function listTags(): CardTag[] {
     .all(getPasseur() ?? '') as CardTag[];
 }
 
+/**
+ * Une puce lue sur le telephone, avec son nom : on l'enregistre si on ne la connaissait pas (ecrite
+ * ailleurs, ou avant qu'on releve les numeros), sinon on la renomme. Son histoire est celle qu'elle
+ * porte vraiment ; la date d'ecriture, elle, n'est pas connue d'une simple lecture et reste.
+ */
+export function registerTag(uid: string, cardId: string, name: string): CardTag {
+  return db()
+    .prepare(
+      `INSERT INTO card_tags (uid, card_id, name) VALUES (?, ?, ?)
+       ON CONFLICT (uid) DO UPDATE SET card_id = excluded.card_id, name = excluded.name
+       RETURNING *`,
+    )
+    .get(uid, cardId, name.trim().slice(0, 60) || null) as CardTag;
+}
+
+/** Une puce perdue, donnee ou jetee : elle ne compte plus parmi les cartes. */
+export function forgetTag(id: number): void {
+  db().prepare('DELETE FROM card_tags WHERE id = ?').run(id);
+}
+
+/**
+ * Les ecritures faites sans numero de puce, pour un contenu. Elles ne designent aucune carte
+ * precise — souvent les memes puces, reecrites — et ne servent qu'a gonfler les compteurs.
+ */
+export function forgetAnonymousTags(cardId: string): void {
+  db().prepare('DELETE FROM card_tags WHERE uid IS NULL AND name IS NULL AND card_id = ?').run(cardId);
+}
+
 export function renameTag(id: number, name: string): void {
   db()
     .prepare('UPDATE card_tags SET name = ? WHERE id = ?')
@@ -145,9 +150,8 @@ export function renameTag(id: number, name: string): void {
 export const tagLabel = (tag: CardTag): string =>
   tag.name ?? (tag.uid ? `puce ${tag.uid.slice(-5)}` : 'copie sans numéro');
 
-/** Les cartes qui portent un contenu : les MYO par leur nom, les copies une par une. */
+/** Les copies qui portent un contenu. */
 export interface Holders {
-  myo: string[];
   copies: CardTag[];
 }
 
@@ -155,10 +159,9 @@ export function holdersByContent(): Map<string, Holders> {
   const holders = new Map<string, Holders>();
   const of = (cardId: string): Holders => {
     let entry = holders.get(cardId);
-    if (!entry) holders.set(cardId, (entry = { myo: [], copies: [] }));
+    if (!entry) holders.set(cardId, (entry = { copies: [] }));
     return entry;
   };
-  for (const card of listMyoCards()) of(card.card_id).myo.push(card.nickname);
   for (const tag of listTags()) of(tag.card_id).copies.push(tag);
   return holders;
 }
@@ -186,8 +189,7 @@ export function rememberTitles(contents: { cardId: string; title: string }[]): v
 
 /**
  * Les contenus d'une histoire : celui qu'elle connait, et ceux qui portent son titre chez Yoto —
- * une histoire publiee sur deux cartes MYO a deux contenus, et un identifiant perdu se retrouve
- * ainsi.
+ * une histoire publiee deux fois a deux contenus, et un identifiant perdu se retrouve ainsi.
  */
 export function contentIdsFor(project: { card_id: string | null; title: string }): string[] {
   const rows = db().prepare('SELECT card_id FROM cards WHERE title = ?').all(project.title) as {
@@ -196,38 +198,78 @@ export function contentIdsFor(project: { card_id: string | null; title: string }
   return [...new Set([project.card_id, ...rows.map((row) => row.card_id)].filter((id) => id !== null))];
 }
 
-/** Toutes les cartes qui portent l'une de ces histoires. */
+/** Toutes les copies qui portent l'un de ces contenus. */
 export function mergeHolders(all: Map<string, Holders>, cardIds: string[]): Holders {
-  return {
-    myo: cardIds.flatMap((id) => all.get(id)?.myo ?? []),
-    copies: cardIds.flatMap((id) => all.get(id)?.copies ?? []),
-  };
+  return { copies: cardIds.flatMap((id) => all.get(id)?.copies ?? []) };
 }
 
 /**
  * Rend son identifiant a une histoire publiee qui l'a perdu, quand un seul contenu porte son
- * titre. (Retirer une carte du pool l'effacait, avant que le pool ne distingue les cartes MYO.)
+ * titre. (Retirer une carte de l'ancien pool l'effacait.)
  */
-export function relinkByTitle(): void {
-  db().exec(`
-    UPDATE projects
-       SET card_id = (SELECT card_id FROM cards WHERE cards.title = projects.title)
-     WHERE card_id IS NULL AND state = 'published'
-       AND (SELECT count(*) FROM cards WHERE cards.title = projects.title) = 1
-  `);
+export function relinkByTitle(): number {
+  return db()
+    .prepare(
+      `UPDATE projects
+          SET card_id = (SELECT card_id FROM cards WHERE cards.title = projects.title)
+        WHERE card_id IS NULL AND state = 'published'
+          AND (SELECT count(*) FROM cards WHERE cards.title = projects.title) = 1`,
+    )
+    .run().changes;
 }
 
-/** Les noms des cartes qui portent un contenu, MYO et copies confondues, pour les afficher. */
+/** Ce qu'une synchronisation avec le compte Yoto a change, ou trouve d'anormal. */
+export interface SyncReport {
+  contents: number;
+  added: string[];
+  retitled: string[];
+  relinked: number;
+  /** Contenus connus ici qui n'existent plus chez Yoto : la carte qui les porte ne joue plus. */
+  missing: string[];
+}
+
+/**
+ * Aligne les contenus connus ici sur la bibliotheque Yoto : chaque contenu du compte y entre, son
+ * titre est mis a jour, et les histoires qui avaient perdu leur identifiant le retrouvent. Rien
+ * n'est supprime : un contenu disparu chez Yoto est seulement signale.
+ */
+export function syncContents(remote: { cardId: string; title: string }[]): SyncReport {
+  const report: SyncReport = { contents: remote.length, added: [], retitled: [], relinked: 0, missing: [] };
+  const insert = db().prepare('INSERT INTO cards (card_id, nickname, title) VALUES (?, ?, ?)');
+  const retitle = db().prepare('UPDATE cards SET title = ? WHERE card_id = ?');
+
+  db().transaction(() => {
+    for (const content of remote) {
+      const known = findByCardId(content.cardId);
+      if (!known) {
+        insert.run(content.cardId, content.title.slice(0, 60), content.title);
+        report.added.push(content.title);
+      } else if (known.title !== content.title) {
+        retitle.run(content.title, content.cardId);
+        // Un titre jamais vu n'est pas un changement : il manquait, simplement.
+        if (known.title) report.retitled.push(`${known.title} → ${content.title}`);
+      }
+    }
+  })();
+
+  const ids = new Set(remote.map((content) => content.cardId));
+  for (const card of listPool()) {
+    if (ids.has(card.card_id)) continue;
+    // L'identifiant departage deux contenus de meme titre (une histoire publiee deux fois).
+    report.missing.push(card.title ? `« ${card.title} » (${card.card_id})` : card.card_id);
+  }
+  report.relinked = relinkByTitle();
+  return report;
+}
+
+/** Les noms des copies qui portent un contenu, pour les afficher. */
 export function holderNames(holders: Holders | undefined): { names: string[]; anonymous: number } {
   const copies = holders?.copies ?? [];
-  const names = [
-    ...(holders?.myo ?? []).map((name) => `« ${name} » (MYO)`),
-    ...copies.filter((tag) => tag.uid || tag.name).map((tag) => `« ${tagLabel(tag)} »`),
-  ];
+  const names = copies.filter((tag) => tag.uid || tag.name).map((tag) => `« ${tagLabel(tag)} »`);
   return { names, anonymous: copies.filter((tag) => !tag.uid && !tag.name).length };
 }
 
-/** « « la bleue » (MYO), « la rouge » et 2 copies sans nom » — ou rien. */
+/** « « la bleue », « la rouge » et 2 copies sans nom » — ou rien. */
 export function holdersSentence(holders: Holders | undefined): string {
   const { names, anonymous } = holderNames(holders);
   if (anonymous) names.push(`${anonymous} copie${anonymous > 1 ? 's' : ''} sans nom`);

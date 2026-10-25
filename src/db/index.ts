@@ -51,24 +51,13 @@ function migrate(handle: Database.Database): void {
     handle.exec('ALTER TABLE projects ADD COLUMN cover_url TEXT');
   }
 
-  // Le pool melangeait les contenus publies et les cartes MYO nommees a la main. On marque ces
-  // dernieres une fois : un nom qui n'est ni le surnom par defaut (« carte xxx ») ni le titre
-  // d'une histoire a ete donne par quelqu'un, a une carte qu'il a dans la main.
-  if (!columns('cards').has('myo')) {
-    handle.exec(`
-      ALTER TABLE cards ADD COLUMN myo INTEGER NOT NULL DEFAULT 0;
-      UPDATE cards SET myo = 1
-       WHERE nickname NOT LIKE 'carte %'
-         AND nickname NOT IN (SELECT title FROM projects);
-    `);
-  }
-
-  // Le titre Yoto de chaque contenu, pour retrouver l'histoire qu'il joue sans appeler Yoto. Le
-  // surnom d'un contenu non nomme a la main est justement ce titre.
+  // Le titre Yoto de chaque contenu, pour retrouver l'histoire qu'il joue sans appeler Yoto. Un
+  // surnom n'est repris que s'il est le titre d'une histoire : un surnom donne a la main (« 1 »)
+  // ferait un faux titre, que la bibliotheque Yoto corrigera.
   if (!columns('cards').has('title')) {
     handle.exec(`
       ALTER TABLE cards ADD COLUMN title TEXT;
-      UPDATE cards SET title = nickname WHERE myo = 0 AND nickname NOT LIKE 'carte %';
+      UPDATE cards SET title = nickname WHERE nickname IN (SELECT title FROM projects);
     `);
   }
 

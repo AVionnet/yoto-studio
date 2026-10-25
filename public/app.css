@@ -73,6 +73,7 @@ a { color: var(--coral-ink); text-underline-offset: 3px; }
 a:hover { filter: brightness(1.2); }
 .muted { color: var(--neutral-700); font-size: 14px; }
 
+* { -webkit-tap-highlight-color: transparent; }
 :focus { outline: none; }
 :focus-visible { outline: 2px solid var(--coral-ink); outline-offset: 2px; }
 ::selection { background: color-mix(in srgb, var(--sun) 60%, transparent); }
@@ -189,16 +190,16 @@ button, .button {
   border: none; border-radius: var(--radius-pill);
   cursor: pointer; text-decoration: none;
 }
-button:hover, .button:hover { background: var(--coral-ink); }
+@media (hover: hover) { button:hover, .button:hover { background: var(--coral-ink); } }
 button:disabled { opacity: .45; cursor: not-allowed; }
-button:disabled:hover { background: var(--neutral-900); }
+@media (hover: hover) { button:disabled:hover { background: var(--neutral-900); } }
 
 button.link {
   min-height: 44px; padding: 0 var(--space-3);
   background: transparent; color: var(--coral-ink);
   font-weight: 700; font-size: 14px; text-decoration: underline;
 }
-button.link:hover { background: color-mix(in srgb, var(--coral) 30%, transparent); }
+@media (hover: hover) { button.link:hover { background: color-mix(in srgb, var(--coral) 30%, transparent); } }
 
 /* `inline-flex` se dimensionne sur son contenu et ignore le cadre : sans `max-width`, un
    formulaire un peu long dépasse de la page au lieu de se replier. */
@@ -230,7 +231,7 @@ progress::-moz-progress-bar { background: var(--coral-ink); border-radius: var(-
   background: transparent; color: var(--neutral-800);
   font-size: 14.5px; border-radius: var(--radius-pill);
 }
-.tablist [role="tab"]:hover { background: var(--neutral-200); }
+@media (hover: hover) { .tablist [role="tab"]:hover { background: var(--neutral-200); } }
 .tablist [role="tab"][aria-selected="true"] { background: var(--coral-ink); color: var(--neutral-100); }
 .tabs:not(.is-enhanced) .tablist { display: none; }
 .tabs:not(.is-enhanced) .tabpanel + .tabpanel { margin-top: var(--space-6); }
@@ -336,7 +337,7 @@ button.is-busy::before {
   border-radius: var(--radius-md); border: 2px solid transparent;
   background: var(--neutral-900); display: grid; place-items: center;
 }
-.icon-pick:hover { background: var(--neutral-900); filter: brightness(1.3); }
+@media (hover: hover) { .icon-pick:hover { background: var(--neutral-900); filter: brightness(1.3); } }
 .icon-pick.is-selected { border-color: var(--coral-ink); }
 .icon-pick img { width: 40px; height: 40px; image-rendering: pixelated; }
 .icon-pick-fallback { color: var(--neutral-100); font-size: 12px; font-weight: 700; }
@@ -371,7 +372,7 @@ button.is-busy::before {
   border-radius: var(--radius-pill);
   border: 2px solid var(--neutral-900); background: transparent; color: var(--neutral-900);
 }
-.btn-round:hover { background: var(--neutral-900); color: var(--neutral-100); }
+@media (hover: hover) { .btn-round:hover { background: var(--neutral-900); color: var(--neutral-100); } }
 a.btn-round { display: grid; place-items: center; }
 
 /* Tuile d'ajout, volontairement en pointillés : ce n'est pas encore une carte. */
@@ -468,7 +469,7 @@ a.btn-round { display: grid; place-items: center; }
 .panel.danger { background: transparent; box-shadow: none; border: 2px dashed var(--divider); }
 .panel.danger h2 { font-size: 19px; }
 button.danger { background: transparent; color: var(--coral-ink); border: 2px solid var(--coral); }
-button.danger:hover { background: var(--coral-ink); color: var(--neutral-100); border-color: var(--coral-ink); }
+@media (hover: hover) { button.danger:hover { background: var(--coral-ink); color: var(--neutral-100); border-color: var(--coral-ink); } }
 
 /* Case à cocher d'une action destructive : lisible, avec une vraie cible tactile. */
 .check {
@@ -533,7 +534,7 @@ textarea {
 .button.ghost {
   background: transparent; color: var(--teal-ink); border: 2px solid var(--teal-ink);
 }
-.button.ghost:hover { background: var(--teal-ink); color: var(--neutral-100); }
+@media (hover: hover) { .button.ghost:hover { background: var(--teal-ink); color: var(--neutral-100); } }
 
 /* Déconnexion de l'application : présente en permanence, mais sans concurrencer la navigation. */
 .logout { margin: 0; }
@@ -542,7 +543,7 @@ textarea {
   border-radius: var(--radius-pill); border: 2px solid transparent;
   background: transparent; color: var(--sun-ink);
 }
-.logout button:hover { background: var(--coral-ink); color: var(--neutral-100); }
+@media (hover: hover) { .logout button:hover { background: var(--coral-ink); color: var(--neutral-100); } }
 
 /* Écran de connexion : rien d'autre à l'écran, la mire se place au centre.
    La hauteur retranchée correspond à l'en-tête et au rembourrage bas du corps. */
@@ -702,3 +703,22 @@ main.centered:has(.landing) { min-height: 0; align-items: start; }
 /* Rangée de boutons dans un panneau. hero-actions ne convient pas : son margin-left
    automatique la colle à droite, ce qui n'a de sens que dans l'en-tête d'une section. */
 .picker { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0 0 var(--space-3); }
+
+/* Chargement d'une page : une bande qui glisse en haut de l'écran (voir loader.js). */
+.page-loader {
+  position: fixed; top: 0; left: 0; right: 0; height: 4px; z-index: 1000;
+  overflow: hidden; pointer-events: none; opacity: 0; transition: opacity .15s;
+}
+.page-loader.is-on { opacity: 1; }
+.page-loader::before {
+  content: ''; position: absolute; top: 0; bottom: 0; width: 40%;
+  background: var(--coral-ink); border-radius: 0 4px 4px 0;
+  animation: page-loader 1.1s ease-in-out infinite;
+}
+@keyframes page-loader { from { left: -40%; } to { left: 100%; } }
+@media (prefers-reduced-motion: reduce) {
+  .page-loader::before { animation: none; left: 0; width: 100%; opacity: .6; }
+}
+
+/* Une liste sans puces typographiques : des lignes qui portent chacune une petite action. */
+.plain-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }

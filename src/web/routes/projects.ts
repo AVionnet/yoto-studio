@@ -18,7 +18,6 @@ import {
   contentIdsFor,
   holdersByContent,
   mergeHolders,
-  listMyoCards,
   holderNames,
   holdersSentence,
   unenroll,
@@ -29,7 +28,6 @@ import {
   clearProjectSource,
   createProject,
   deleteProject,
-  findProjectByCard,
   getProject,
   listTracks,
   setProjectCover,
@@ -105,8 +103,6 @@ function isYoutubeUrl(value: string): boolean {
 const inFlight = new Set<string>();
 
 function newProjectPage(token: string, error?: string): string {
-  const myo = listMyoCards();
-
   return layout(
     { title: 'Nouvelle histoire', nav: 'stories' },
     html`
@@ -120,20 +116,6 @@ function newProjectPage(token: string, error?: string): string {
         <label for="title">Titre de l'histoire</label>
         <input id="title" name="title" required maxlength="140"
                placeholder="Jack et le haricot magique">
-
-        <label for="cardId">Où publier</label>
-        <select id="cardId" name="cardId">
-          <option value="">Nouveau contenu Yoto — à mettre ensuite sur une carte</option>
-          ${myo.map((card) => {
-            const replaced = findProjectByCard(card.card_id)?.title;
-            return html`<option value="${card.card_id}">
-              Sur la carte MYO « ${card.nickname} »${replaced ? ` — à la place de « ${replaced} »` : ''}
-            </option>`;
-          })}
-        </select>
-        <p class="muted">
-          Publier sur une carte MYO nommée change l'histoire qu'elle joue, sans la toucher.
-        </p>
 
         <div class="tabs" data-tabs>
           <div class="tablist" role="tablist" aria-label="Source audio">
@@ -557,18 +539,34 @@ function publishPanel(
   if (tracks.length === 0) return '';
   const missing = tracks.filter((track) => !track.file_path).length;
   const published = project.state === 'published';
-  // Les contenus qui jouent deja l'histoire : republier doit les mettre a jour, pas en creer un.
-  const mine = contentIdsFor(project);
-  const myo = listMyoCards();
-  const others = myo.filter((card) => !mine.includes(card.card_id));
-  // Un contenu de l'histoire qui n'est sur aucune carte MYO nommee : celui qu'elle connait.
-  const ownOnly = project.card_id && !myo.some((card) => card.card_id === project.card_id);
+  // Republier met a jour le contenu existant : les copies qui portent son adresse jouent alors la
+  // nouvelle version. En creer un neuf les laisserait sur l'ancienne.
+  const copies = holdersByContent();
+  const count = (cardId: string): number => copies.get(cardId)?.copies.length ?? 0;
+  const relevee = (cardId: string): number => (findByCardId(cardId)?.ndef_url ? 1 : 0);
+  const contents = contentIdsFor(project).sort(
+    (a, b) => count(b) - count(a) || relevee(b) - relevee(a),
+  );
+  // Les versions portent toutes le titre de l'histoire : on les distingue par leurs copies, ou par
+  // ce qu'on peut en faire. L'identifiant ne sert qu'a departager deux descriptions identiques.
+  const describe = (cardId: string): string => {
+    const onCards = holdersSentence(copies.get(cardId));
+    if (onCards) return `Sur ${onCards}`;
+    return findByCardId(cardId)?.ndef_url
+      ? 'Aucune copie — adresse relevée, prête à copier'
+      : 'Aucune copie — jamais relevée sur le passeur';
+  };
+  const labels = contents.map(describe);
+  const label = (cardId: string, index: number): string =>
+    labels.indexOf(labels[index]!) !== labels.lastIndexOf(labels[index]!)
+      ? `${labels[index]} (${cardId})`
+      : labels[index]!;
   return html`
     <section class="panel">
       <h2>Publier chez Yoto</h2>
       <p class="muted">
         Envoie les chapitres, les icônes et la couverture vers ton compte Yoto. Les cartes qui
-        portent déjà l'histoire jouent la nouvelle version, sans rien réécrire.
+        portent déjà l'histoire jouent la nouvelle version, sans être réécrites.
       </p>
       ${published && project.card_id
         ? html`<p>Publiée sous <code>${project.card_id}</code>. ${yotoLink(project.card_id)}</p>`
@@ -579,27 +577,21 @@ function publishPanel(
           ? html`<p class="muted">Un travail est en cours ; attends qu'il se termine.</p>`
           : html`
               <form method="post" action="/projets/${project.id}/publier" data-guard>
-                <label for="cardId">Où publier</label>
-                <select id="cardId" name="cardId">
-                  ${ownOnly
-                    ? html`<option value="${project.card_id}" selected>Mettre à jour cette histoire</option>`
-                    : ''}
-                  ${myo
-                    .filter((card) => mine.includes(card.card_id))
-                    .map(
-                      (card, index) => html`<option value="${card.card_id}"
-                          ${!ownOnly && index === 0 ? raw('selected') : ''}>
-                          Carte MYO « ${card.nickname} » (la porte déjà)
-                        </option>`,
-                    )}
-                  <option value="">Nouveau contenu Yoto — à mettre ensuite sur une carte</option>
-                  ${others.map((card) => {
-                    const replaced = findProjectByCard(card.card_id)?.title;
-                    return html`<option value="${card.card_id}">
-                      Sur la carte MYO « ${card.nickname} »${replaced ? ` — à la place de « ${replaced} »` : ''}
-                    </option>`;
-                  })}
-                </select>
+                ${contents.length > 1
+                  ? html`
+                      <label for="cardId">Version à mettre à jour</label>
+                      <select id="cardId" name="cardId">
+                        ${contents.map(
+                          (cardId, index) => html`<option value="${cardId}">
+                            ${label(cardId, index)}
+                          </option>`,
+                        )}
+                      </select>
+                      <p class="muted">
+                        L'histoire a été publiée plusieurs fois : chaque version a ses copies.
+                      </p>
+                    `
+                  : html`<input type="hidden" name="cardId" value="${contents[0] ?? ''}">`}
                 <button type="submit" data-busy-label="Envoi…">
                   ${published ? 'Republier' : 'Publier'}
                 </button>
@@ -610,7 +602,7 @@ function publishPanel(
   `;
 }
 
-/** Les cartes qui portent l'histoire, et comment en ajouter une. */
+/** Les copies qui portent l'histoire, et comment en faire une. */
 function cardPanel(project: Project, holders: Holders | undefined): Html | string {
   if (project.state !== 'published') return '';
   const addressKnown = contentIdsFor(project).some((id) => findByCardId(id)?.ndef_url);
@@ -621,23 +613,13 @@ function cardPanel(project: Project, holders: Holders | undefined): Html | strin
       ${onCards
         ? html`<p>Sur ${onCards}. <a href="/cartes">Nommer les cartes</a></p>`
         : html`<p>Aucune carte ne porte encore cette histoire.</p>`}
-
-      <h3>Sur une puce du commerce</h3>
       <p class="muted">
         ${addressKnown
           ? html`Adresse déjà relevée : pose directement la puce, neuve ou déjà écrite.`
           : html`Relie d'abord l'histoire à ton passeur dans l'app Yoto (« Link to a card ») ; la
               page te guide ensuite.`}
       </p>
-      <p><a class="button" href="/cartes/encoder?projet=${project.id}">Fabriquer une carte</a></p>
-
-      <h3>Sur une carte MYO officielle</h3>
-      <p class="muted">
-        Une carte MYO déjà nommée : choisis-la dans « Où publier » ci-dessus. Une carte neuve :
-        ouvre l'histoire chez Yoto, « Link to a card », approche la carte, puis nomme-la dans
-        <a href="/cartes">Cartes</a>.
-      </p>
-      ${yotoLink(project.card_id)}
+      <a class="button" href="/cartes/encoder?projet=${project.id}">Fabriquer une carte</a>
     </section>
   `;
 }
