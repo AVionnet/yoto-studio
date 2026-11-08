@@ -94,6 +94,17 @@ describe('construction de la carte', () => {
     assert.equal(card.metadata?.media?.fileSize, 3000);
   });
 
+  it('marque la carte jouable hors ligne, comme le fait l app Yoto', () => {
+    const card = buildCard({ title: 'Album', tracks: [track(), track()] });
+
+    assert.equal(card.metadata?.media?.hasStreams, false);
+    assert.equal(card.content!.config?.['onlineOnly'], false);
+    assert.deepEqual(
+      card.content!.chapters.map((chapter) => chapter.hasStreams),
+      [false, false],
+    );
+  });
+
   it('omet les champs absents au lieu d envoyer des nulls', () => {
     const card = buildCard({ title: 'Album', tracks: [track({ info: undefined })] });
     const serialised = JSON.stringify(card);

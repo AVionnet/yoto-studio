@@ -67,6 +67,7 @@ export interface Chapter {
   tracks: Track[];
   display?: TrackDisplay;
   overlayLabel?: string;
+  hasStreams?: boolean;
 }
 
 export interface CardContent {
@@ -82,7 +83,7 @@ export interface CardMetadata {
   languages?: string[];
   minAge?: number;
   maxAge?: number;
-  media?: { duration?: number; fileSize?: number };
+  media?: { duration?: number; fileSize?: number; hasStreams?: boolean };
 }
 
 /**

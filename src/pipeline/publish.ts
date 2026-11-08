@@ -79,6 +79,7 @@ export function buildCard(input: CardInput): Card {
       title: entry.title,
       tracks: [track],
       overlayLabel: String(position),
+      hasStreams: false,
       ...(display ? { display } : {}),
     };
   });
@@ -90,7 +91,9 @@ export function buildCard(input: CardInput): Card {
 
   return {
     title: input.title,
-    content: { chapters, config: { autoadvance: 'next' } },
+    // `hasStreams` et `onlineOnly` a false, comme l'app Yoto les ecrit : sans eux, le lecteur
+    // ne garde pas une carte de plusieurs pistes en memoire et ne la joue qu'en wifi.
+    content: { chapters, config: { autoadvance: 'next', onlineOnly: false } },
     metadata: {
       ...(input.coverUrl ? { cover: { imageL: input.coverUrl } } : {}),
       ...(input.author ? { author: input.author } : {}),
@@ -99,7 +102,7 @@ export function buildCard(input: CardInput): Card {
       ...(input.languages ? { languages: input.languages } : {}),
       ...(input.minAge === undefined ? {} : { minAge: input.minAge }),
       ...(input.maxAge === undefined ? {} : { maxAge: input.maxAge }),
-      media: { duration: Math.round(totalDuration), fileSize: totalSize },
+      media: { duration: Math.round(totalDuration), fileSize: totalSize, hasStreams: false },
     },
   };
 }
