@@ -280,15 +280,22 @@ export async function proposeSegments(path: string, options: BoundaryOptions = {
   return { totalMs, range, segments: segmentsFrom(boundaries, totalMs, range) };
 }
 
-/** Seuil au-dela duquel une extremite n'est plus du silence : la coupe a mordu dans le son. */
-export const EDGE_SILENCE_DB = -40;
-const EDGE_WINDOW_S = 0.6;
+/**
+ * Seuil au-dela duquel une extremite n'est plus du silence : la coupe a mordu dans le son.
+ *
+ * C'est le seuil de la detection elle-meme : on coupe au milieu d'un silence mesure a -30 dB,
+ * l'exiger a -40 dB signalait toute coupe tombee dans un souffle de fond.
+ */
+export const EDGE_SILENCE_DB = DEFAULT_NOISE_DB;
+/**
+ * Moins que la moitie du plus court silence detecte : une coupe placee en son milieu laisse au
+ * moins 250 ms de blanc de chaque cote, la fenetre ne deborde donc pas sur la parole voisine.
+ */
+const EDGE_WINDOW_S = 0.2;
 
 export interface EdgeLevels {
   headDb: number | null;
   tailDb: number | null;
-  /** Faux si une extremite depasse le seuil : une coupe est probablement tombee en plein mot. */
-  clean: boolean;
 }
 
 async function meanVolumeDb(args: string[]): Promise<number | null> {
@@ -301,7 +308,7 @@ async function meanVolumeDb(args: string[]): Promise<number | null> {
   return match?.[1] === undefined ? null : Number(match[1]);
 }
 
-/** Mesure 0,6 s en tete et en queue : detecte un mot coupe sans reecouter tout le fichier. */
+/** Mesure 0,2 s en tete et en queue : detecte un mot coupe sans reecouter tout le fichier. */
 export async function measureEdges(path: string): Promise<EdgeLevels> {
   const durationMs = await probeDurationMs(path);
   const tailStart = Math.max(0, durationMs / 1000 - EDGE_WINDOW_S);
@@ -315,6 +322,5 @@ export async function measureEdges(path: string): Promise<EdgeLevels> {
     ]),
   ]);
 
-  const loud = (value: number | null): boolean => value !== null && value > EDGE_SILENCE_DB;
-  return { headDb, tailDb, clean: !loud(headDb) && !loud(tailDb) };
+  return { headDb, tailDb };
 }

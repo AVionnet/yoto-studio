@@ -117,6 +117,13 @@ function migrate(handle: Database.Database, schema: string): void {
     handle.exec('PRAGMA foreign_keys = ON');
   }
 
+  // Les premieres mesures de coupe etaient prises sur tous les fichiers, avec un seuil plus
+  // strict que la detection : elles signalaient a tort la plupart des pistes. On les oublie une
+  // fois ; les nouvelles ne portent que sur les coupures du decoupage automatique.
+  if ((handle.pragma('user_version', { simple: true }) as number) < 1) {
+    handle.exec('UPDATE tracks SET head_db = NULL, tail_db = NULL; PRAGMA user_version = 1');
+  }
+
   handle.exec(`
     CREATE INDEX IF NOT EXISTS projects_account ON projects (account_id, id);
     CREATE INDEX IF NOT EXISTS cards_account ON cards (account_id);

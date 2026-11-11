@@ -5,10 +5,10 @@
  * pendant l'upload ne perd rien, l'etat vit en base.
  */
 import { randomUUID } from 'node:crypto';
-import { createWriteStream } from 'node:fs';
+import { createWriteStream, existsSync } from 'node:fs';
 import { copyFile, mkdir, mkdtemp, rename, rm, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, extname, join } from 'node:path';
+import { basename, dirname, extname, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 
 import type { FastifyInstance } from 'fastify';
@@ -28,12 +28,14 @@ import {
   clearProjectSource,
   createProject,
   deleteProject,
+  deleteTrack,
   getProject,
   listTracks,
   setProjectCover,
   setProjectSource,
   setTrackEdges,
   setTrackIcon,
+  setTrackPath,
   type Project,
   type TrackRow,
 } from '../../db/projects.ts';
@@ -452,6 +454,10 @@ function tracksPanel(project: Project, tracks: TrackRow[], running: boolean): Ht
   const missing = tracks.filter((track) => !track.file_path).length;
   const voice = project.source_kind === 'voice';
   if (tracks.length === 0 && !voice) return '';
+  // Pendant un travail, le worker lit les pistes par indice : on ne les renumerote pas sous lui.
+  // Le dernier chapitre reste : une histoire vide ne se publie pas, autant la supprimer entiere.
+  const removable = !running && tracks.length > 1;
+  const published = project.state === 'published';
   return html`
     <section class="panel">
       <h2>Chapitres</h2>
@@ -474,7 +480,9 @@ function tracksPanel(project: Project, tracks: TrackRow[], running: boolean): Ht
           : ''}
       </div>
       <table class="stack">
-        <thead><tr><th>#</th><th>Titre</th><th>Durée</th><th>Icône</th></tr></thead>
+        <thead>
+          <tr><th>#</th><th>Titre</th><th>Durée</th><th>Icône</th>${removable ? html`<th></th>` : ''}</tr>
+        </thead>
         <tbody>
           ${tracks.map(
             (track) => html`<tr>
@@ -499,6 +507,19 @@ function tracksPanel(project: Project, tracks: TrackRow[], running: boolean): Ht
                   ${track.icon_media_id ? 'Changer' : 'Choisir'}
                 </a>
               </td>
+              ${removable
+                ? html`<td class="act">
+                    <form method="post" action="/projets/${project.id}/pistes/${track.idx}/supprimer"
+                          class="inline-link"
+                          onsubmit="return confirm(${JSON.stringify(
+                            `Supprimer le chapitre ${track.idx + 1} « ${track.title} » ?${
+                              published ? ' Republie ensuite pour que les cartes le perdent.' : ''
+                            }`,
+                          )})">
+                      <button class="link" type="submit">Supprimer</button>
+                    </form>
+                  </td>`
+                : ''}
             </tr>`,
           )}
         </tbody>
@@ -783,8 +804,8 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
             title: titleFromFilename(file.name),
             filePath: final,
           });
-          const edges = await measureEdges(final);
-          setTrackEdges(projectId, index, edges.headDb, edges.tailDb);
+          // Pas de controle de coupe : ces fichiers sont entiers, on ne les a pas coupes. Un
+          // generique qui demarre net n'est pas un mot tronque.
         }
       }
 
@@ -929,7 +950,13 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
       if (!track) return reply.status(404).send('Piste introuvable.');
 
       try {
-        const icon = await drawIcon(request.body?.sujet?.trim() || track.title);
+        // Un sujet tape a la main remplace le titre, mais garde le contexte de l'histoire.
+        const typed = request.body?.sujet?.trim();
+        const icon = await drawIcon({
+          subject: typed || track.title,
+          story: project.title,
+          text: typed ? undefined : (track.text ?? undefined),
+        });
         const uploaded = await uploadIcon(icon, `piste-${idx + 1}.png`);
         setTrackIcon(projectId, idx, uploaded.mediaId, uploaded.url ?? null);
         // Retour a la page des icones, et non au projet : un dessin se regarde, et se refait.
@@ -991,13 +1018,15 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
 
       // Le debut de l'histoire, quand elle existe, vaut mieux que n'importe quelle consigne :
       // le dessin parle alors de ce que la carte raconte vraiment.
-      const first = listTracks(projectId).find((track) => track.text)?.text;
+      const tracks = listTracks(projectId);
+      const first = tracks.find((track) => track.text)?.text;
       const consigne = request.body?.consigne?.trim();
 
       try {
         const png = await drawCover({
           title: project.title,
           ...(first ? { summary: first.slice(0, 600) } : {}),
+          chapters: tracks.map((track) => track.title),
           ...(consigne ? { extra: consigne } : {}),
         });
         const cover = await uploadCover(png, 'image/png');
@@ -1053,8 +1082,15 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
           trackTotal: segments.length,
         });
         addTrack({ projectId, idx: index, title: `Piste ${index + 1}`, filePath: destination });
+        // Seules les coupures internes sont a nous. Le debut de la premiere piste et la fin de
+        // la derniere sont rognes au ras du son : les mesurer signalerait une coupe a tort.
         const edges = await measureEdges(destination);
-        setTrackEdges(projectId, index, edges.headDb, edges.tailDb);
+        setTrackEdges(
+          projectId,
+          index,
+          index > 0 ? edges.headDb : null,
+          index < segments.length - 1 ? edges.tailDb : null,
+        );
       }
 
       await rm(project.source_path, { force: true });
@@ -1128,6 +1164,43 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
       await new Promise((done) => setTimeout(done, 1000));
     }
   });
+
+  app.post<{ Params: { id: string; idx: string } }>(
+    '/projets/:id/pistes/:idx/supprimer',
+    async (request, reply) => {
+      const projectId = Number(request.params.id);
+      const idx = Number(request.params.idx);
+      const project = getProject(projectId);
+      if (!project) return reply.redirect('/');
+
+      const job = latestJobFor(projectId);
+      const tracks = listTracks(projectId);
+      const track = tracks.find((row) => row.idx === idx);
+      if (!track || tracks.length < 2 || (job && !isTerminal(job.state))) {
+        return reply.redirect(`/projets/${projectId}`);
+      }
+
+      const shifted = deleteTrack(projectId, idx);
+      if (track.file_path) await rm(track.file_path, { force: true });
+
+      // Les fichiers suivent la numerotation (« 03.m4a » pour le chapitre 3) : l'enregistrement
+      // vocal y ecrit d'apres l'indice. Sans renommage, refaire le chapitre 3 ecraserait le son
+      // de l'ancien chapitre 3, devenu le 2.
+      const byIdx = new Map(tracks.map((row) => [row.idx, row]));
+      for (const { from, to } of shifted) {
+        const path = byIdx.get(from)?.file_path;
+        if (!path) continue;
+        const ext = extname(path);
+        if (basename(path) !== `${String(from + 1).padStart(2, '0')}${ext}`) continue;
+        const target = join(dirname(path), `${String(to + 1).padStart(2, '0')}${ext}`);
+        if (existsSync(target)) continue;
+        await rename(path, target);
+        setTrackPath(projectId, to, target);
+      }
+
+      return reply.redirect(`/projets/${projectId}`);
+    },
+  );
 
   app.post<{ Params: { id: string }; Body: { alsoYoto?: string } }>(
     '/projets/:id/supprimer',

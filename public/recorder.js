@@ -68,9 +68,7 @@
         }
         li.dataset.recorded = '1';
         label.textContent = 'Refaire';
-        setState(li, res.body.clean === false
-          ? 'enregistré — début ou fin coupé(e), refais si besoin'
-          : 'enregistré');
+        setState(li, 'enregistré');
 
         var preview = li.querySelector('.rec-preview');
         preview.hidden = false;

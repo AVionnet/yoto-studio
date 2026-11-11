@@ -90,7 +90,8 @@ CREATE TABLE IF NOT EXISTS tracks (
   file_path         TEXT,
   duration_ms       INTEGER,
   file_size         INTEGER,
-  -- Controle de coupe : niveau moyen sur 0,6 s en tete et en queue. Doit etre <= -40 dB.
+  -- Controle de coupe : niveau moyen sur 0,2 s de part et d'autre d'une coupure faite par le
+  -- decoupage automatique. Doit etre <= -30 dB. Nul la ou on n'a pas coupe.
   head_db           REAL,
   tail_db           REAL,
   transcoded_sha256 TEXT,                       -- donne trackUrl = "yoto:#" || ce sha

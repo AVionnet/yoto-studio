@@ -42,7 +42,12 @@ COULEUR
 
 QUANTITÉ — entre 25 et 60 formes.
 
-Réponds uniquement par un objet json de cette forme : {"svg": "<svg …>…</svg>"}`;
+SUJET — l'enfant doit reconnaître son histoire d'après le dessin. Avant de dessiner, choisis le
+sujet à partir du titre : le personnage qu'il nomme (« P'tit Loup » → un petit loup), sinon l'objet
+ou le lieu qu'il évoque. Les chapitres, quand ils sont donnés, précisent l'univers.
+
+Réponds uniquement par un objet json de cette forme :
+{"sujet": "ce que tu dessines, en quelques mots", "svg": "<svg …>…</svg>"}`;
 
 const ICON_PROMPT = `Tu dessines l'icône d'un chapitre, affichée en 16 pixels sur 16 sur l'écran
 d'un lecteur audio pour enfant. Tu la dessines en SVG sur une grille de 64 par 64, sachant
@@ -59,7 +64,16 @@ RÈGLES
   fin, pas de texte, pas de dégradé, pas de filtre.
 - La silhouette prime : un enfant doit nommer l'objet d'un coup d'œil.
 
-Réponds uniquement par un objet json de cette forme : {"svg": "<svg viewBox=\\"0 0 64 64\\">…</svg>"}`;
+SUJET — l'icône doit rappeler le chapitre. Avant de dessiner, choisis l'objet, dans cet ordre :
+1. un personnage, un animal ou un objet nommé dans le titre du chapitre ;
+2. sinon, ce qui domine le texte du chapitre, s'il est donné ;
+3. sinon, le héros ou l'objet emblématique de l'histoire, d'après son titre.
+Un jour de la semaine, un numéro ou un mot abstrait ne se dessine pas tel quel : traduis-le en
+objet concret (« la colère » → un nuage d'orage, « dormir » → une lune), ou passe à la règle
+suivante. Jamais de lettre ni de chiffre.
+
+Réponds uniquement par un objet json de cette forme :
+{"sujet": "l'objet choisi, en quelques mots", "svg": "<svg viewBox=\\"0 0 64 64\\">…</svg>"}`;
 
 /**
  * Temperature basse : a 1,3 — le reglage des histoires — le modele produit régulièrement du SVG
@@ -133,18 +147,35 @@ export interface CoverBrief {
   summary?: string | undefined;
   /** Ce que le parent ajoute de sa main. */
   extra?: string | undefined;
+  /** Les titres des chapitres : sans texte, ce sont les seuls indices sur le contenu. */
+  chapters?: string[] | undefined;
 }
 
 /** La couverture d'une carte, en PNG 1024x1024. */
 export async function drawCover(brief: CoverBrief): Promise<Buffer> {
   const parts = [`Couverture de la carte « ${brief.title} ».`];
   if (brief.summary) parts.push(`L'histoire commence ainsi : ${brief.summary}`);
+  if (brief.chapters?.length) {
+    parts.push(`Chapitres : ${brief.chapters.slice(0, 20).map((t) => `« ${t} »`).join(', ')}.`);
+  }
   if (brief.extra) parts.push(brief.extra);
 
   return draw(COVER_PROMPT, parts.join('\n\n'), COVER_VIEWBOX, renderIllustration, 120_000);
 }
 
+export interface IconBrief {
+  /** Le titre du chapitre, ou le sujet que le parent a tape a la place. */
+  subject: string;
+  /** Le titre de l'histoire : il donne le heros quand le chapitre ne nomme rien de dessinable. */
+  story?: string | undefined;
+  /** Le debut du texte lu, pour une histoire ecrite. */
+  text?: string | undefined;
+}
+
 /** L'icone d'une piste, en PNG 16x16. */
-export async function drawIcon(subject: string): Promise<Buffer> {
-  return draw(ICON_PROMPT, subject, ICON_VIEWBOX, renderIcon, 60_000);
+export async function drawIcon(brief: IconBrief): Promise<Buffer> {
+  const parts = [`Chapitre : « ${brief.subject} ».`];
+  if (brief.story && brief.story !== brief.subject) parts.push(`Histoire : « ${brief.story} ».`);
+  if (brief.text) parts.push(`Le chapitre commence ainsi : ${brief.text.slice(0, 500)}`);
+  return draw(ICON_PROMPT, parts.join('\n\n'), ICON_VIEWBOX, renderIcon, 60_000);
 }

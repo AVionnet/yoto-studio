@@ -205,6 +205,37 @@ export function setTrackFile(projectId: number, idx: number, filePath: string, d
     .run(filePath, durationMs, projectId, idx, me());
 }
 
+/**
+ * Retire une piste et renumerote les suivantes, sans trou. Rend les pistes decalees avec leur
+ * nouvel indice, pour que l'appelant renomme leurs fichiers.
+ */
+export function deleteTrack(projectId: number, idx: number): { from: number; to: number }[] {
+  const handle = db();
+  return handle.transaction(() => {
+    const removed = handle
+      .prepare(`DELETE FROM tracks WHERE project_id = ? AND idx = ? AND ${OWNED}`)
+      .run(projectId, idx, me());
+    if (removed.changes === 0) return [];
+    const following = handle
+      .prepare(`SELECT idx FROM tracks WHERE project_id = ? AND idx > ? AND ${OWNED} ORDER BY idx`)
+      .all(projectId, idx, me()) as { idx: number }[];
+    // Une par une, dans l'ordre : UNIQUE (project_id, idx) refuserait un decalage d'un bloc.
+    const shift = handle.prepare(`UPDATE tracks SET idx = ? WHERE project_id = ? AND idx = ? AND ${OWNED}`);
+    for (const row of following) shift.run(row.idx - 1, projectId, row.idx, me());
+    handle
+      .prepare(`UPDATE projects SET updated_at = datetime('now') WHERE id = ? AND account_id = ?`)
+      .run(projectId, me());
+    return following.map((row) => ({ from: row.idx, to: row.idx - 1 }));
+  })();
+}
+
+/** Repointe une piste vers son fichier renomme. */
+export function setTrackPath(projectId: number, idx: number, filePath: string): void {
+  db()
+    .prepare(`UPDATE tracks SET file_path = ? WHERE project_id = ? AND idx = ? AND ${OWNED}`)
+    .run(filePath, projectId, idx, me());
+}
+
 export function listTracks(projectId: number): TrackRow[] {
   return db()
     .prepare(`SELECT * FROM tracks WHERE project_id = ? AND ${OWNED} ORDER BY idx`)

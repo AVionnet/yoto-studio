@@ -169,7 +169,11 @@ async function runArtwork(job: Job): Promise<unknown> {
     reportProgress(job.id, `Dessin de « ${track.title} »…`, index, tracks.length);
 
     try {
-      const icon = await drawIcon(track.title);
+      const icon = await drawIcon({
+        subject: track.title,
+        story: getProject(payload.projectId)?.title,
+        text: track.text ?? undefined,
+      });
       const uploaded = await uploadIcon(icon, `piste-${track.idx + 1}.png`);
       setTrackIcon(payload.projectId, track.idx, uploaded.mediaId, uploaded.url ?? null);
       drawn += 1;
