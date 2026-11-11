@@ -8,6 +8,7 @@
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { runAs } from '../accounts/context.ts';
 import { config } from '../config.ts';
 import { enroll, rememberTitles } from '../db/cards.ts';
 import {
@@ -131,8 +132,6 @@ async function runBuild(job: Job): Promise<unknown> {
 
   const isNew = !payload.cardId;
   if (card.cardId) {
-    // L'ordre compte : projects.card_id reference cards.card_id, donc la carte doit exister
-    // dans le pool avant qu'un projet puisse la designer.
     if (isNew) enroll(card.cardId, payload.title);
     rememberTitles([{ cardId: card.cardId, title: payload.title }]);
     setProjectCard(payload.projectId, card.cardId);
@@ -237,8 +236,9 @@ export function startWorker(log: { info: (msg: string) => void; error: (msg: str
         await new Promise((done) => setTimeout(done, POLL_INTERVAL_MS));
         continue;
       }
-      log.info(`travail ${job.id} (${job.kind}) démarré`);
-      await runOne(job);
+      log.info(`travail ${job.id} (${job.kind}) démarré pour le compte ${job.account_id}`);
+      // Base et Yoto sont lus au nom du compte du travail : ses jetons, ses projets.
+      await runAs(job.account_id, () => runOne(job));
       log.info(`travail ${job.id} terminé`);
     }
   })();

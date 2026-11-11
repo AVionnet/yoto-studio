@@ -5,12 +5,15 @@
  * Les travaux termines sont conserves jusqu'a leur peremption plutot que supprimes a la premiere
  * lecture — sinon un simple rafraichissement de page perd le resultat.
  */
+import { currentAccountId as me } from '../accounts/context.ts';
 import { db } from '../db/index.ts';
 
 export type JobState = 'queued' | 'running' | 'cancelling' | 'done' | 'error' | 'cancelled';
 
 export interface Job {
   id: number;
+  /** Le worker execute le travail au nom de ce compte. */
+  account_id: number;
   project_id: number | null;
   kind: string;
   payload_json: string;
@@ -33,28 +36,36 @@ const TERMINAL: JobState[] = ['done', 'error', 'cancelled'];
 export function enqueue(kind: string, payload: unknown, projectId?: number): number {
   const info = db()
     .prepare(
-      `INSERT INTO jobs (project_id, kind, payload_json, message)
-       VALUES (?, ?, ?, 'En attente…')`,
+      `INSERT INTO jobs (account_id, project_id, kind, payload_json, message)
+       VALUES (?, ?, ?, ?, 'En attente…')`,
     )
-    .run(projectId ?? null, kind, JSON.stringify(payload ?? {}));
+    .run(me(), projectId ?? null, kind, JSON.stringify(payload ?? {}));
   return Number(info.lastInsertRowid);
 }
 
 export function getJob(id: number): Job | undefined {
-  return db().prepare('SELECT * FROM jobs WHERE id = ?').get(id) as Job | undefined;
+  return db()
+    .prepare('SELECT * FROM jobs WHERE id = ? AND account_id = ?')
+    .get(id, me()) as Job | undefined;
 }
 
 /** Le travail en cours ou le dernier termine pour un projet. */
 export function latestJobFor(projectId: number): Job | undefined {
   return db()
-    .prepare('SELECT * FROM jobs WHERE project_id = ? ORDER BY id DESC LIMIT 1')
-    .get(projectId) as Job | undefined;
+    .prepare('SELECT * FROM jobs WHERE project_id = ? AND account_id = ? ORDER BY id DESC LIMIT 1')
+    .get(projectId, me()) as Job | undefined;
 }
 
+/**
+ * Le prochain travail, tous comptes confondus. Un travail d'avant les comptes attend que le premier
+ * compte le reprenne : sans compte, il n'aurait au nom de qui s'executer.
+ */
 export function claimNext(): Job | undefined {
   const claim = db().transaction((): Job | undefined => {
     const next = db()
-      .prepare(`SELECT * FROM jobs WHERE state = 'queued' ORDER BY id LIMIT 1`)
+      .prepare(
+        `SELECT * FROM jobs WHERE state = 'queued' AND account_id IS NOT NULL ORDER BY id LIMIT 1`,
+      )
       .get() as Job | undefined;
     if (!next) return undefined;
     db()

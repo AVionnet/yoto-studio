@@ -36,7 +36,7 @@ COMPOSE_PROJECT_NAME=yoto-studio
 TRAEFIK_HOST=yoto.vadech.tech
 
 SESSION_SECRET=<openssl rand -hex 32>
-APP_PASSWORD=<un mot de passe solide>
+INVITE_CODE=<code à donner pour créer un compte>
 
 YOTO_CLIENT_ID=<portail développeur Yoto>
 YOTO_CLIENT_SECRET=<idem, si client confidentiel>
@@ -51,6 +51,16 @@ docker compose up -d --build
 
 **Déclarer le callback** `https://yoto.vadech.tech/auth/yoto/callback` dans les *Allowed Callback
 URLs* du portail développeur Yoto. Sans lui, la connexion échoue avec une erreur de redirection.
+
+## Comptes
+
+Chacun crée son compte sur `/inscription` avec le code `INVITE_CODE`, puis relie **son** compte
+Yoto depuis Réglages. Un compte ne voit que ses histoires, ses contenus et ses cartes.
+
+**Passage aux comptes** (mise à jour depuis la version à mot de passe unique) : rien à migrer à la
+main. Le `.env` existant reste valable, `APP_PASSWORD` servant de code d'invitation. Le **premier**
+compte créé reprend les histoires, les cartes, le passeur et la connexion Yoto déjà présents : le
+créer soi-même, juste après la mise à jour.
 
 ## Mises à jour
 

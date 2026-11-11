@@ -13,7 +13,12 @@ process.env.YOTO_CLIENT_ID = 'client-de-test';
 process.env.PUBLIC_BASE_URL = 'https://exemple.test';
 process.env.SESSION_SECRET = 'x'.repeat(32);
 
-const { setSetting } = await import('../db/index.ts');
+const { createAccount, setAccountSetting: setSetting } = await import(
+  '../db/accounts.ts'
+);
+const { enterAs } = await import('../accounts/context.ts');
+// Les jetons Yoto sont ceux du compte courant : tout le fichier agit au nom d'un compte de test.
+enterAs(createAccount('test', 'scrypt$x$y')!);
 const { buildCard, titleFromFilename } = await import('./publish.ts');
 const upload = await import('./upload.ts');
 

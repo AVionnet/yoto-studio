@@ -9,8 +9,11 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { runAs } from '../accounts/context.ts';
 import { config } from '../config.ts';
-import { authRoutes } from './routes/auth.ts';
+import { getProject } from '../db/projects.ts';
+import { accountRoutes } from './routes/account.ts';
+import { authRoutes, sessionAccount } from './routes/auth.ts';
 import { cardRoutes } from './routes/cards.ts';
 import { encodeRoutes } from './routes/encode.ts';
 import { homeRoutes } from './routes/home.ts';
@@ -58,7 +61,27 @@ export async function buildApp(): Promise<FastifyInstance> {
     prefix: '/static/',
   });
 
+  // Tout ce qui suit s'execute au nom du compte de la session : base et Yoto lisent ce contexte.
+  // En preHandler, et non en onRequest : le corps d'un POST est lu entre les deux, sur des
+  // evenements de flux qui ne porteraient pas le contexte jusqu'au handler.
+  app.addHook('preHandler', (request, _reply, done) => {
+    runAs(sessionAccount(request), done);
+  });
+
+  // Une histoire d'un autre compte n'existe pas, quelle que soit la route qui la designe : ce garde
+  // couvre d'un coup les pistes, l'audio, la couverture, le flux de progression et l'annulation.
+  app.addHook('preHandler', async (request, reply) => {
+    if (!request.routeOptions.url?.startsWith('/projets/:id')) return undefined;
+    if (request.session.accountId === undefined) return undefined; // requireAuth redirigera
+    const id = Number((request.params as { id?: string }).id);
+    if (!Number.isInteger(id) || !getProject(id)) {
+      return reply.status(404).send('Histoire introuvable.');
+    }
+    return undefined;
+  });
+
   await app.register(authRoutes);
+  await app.register(accountRoutes);
   await app.register(homeRoutes);
   await app.register(cardRoutes);
   await app.register(encodeRoutes);

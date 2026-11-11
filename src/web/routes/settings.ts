@@ -1,5 +1,5 @@
 /**
- * Reglages : le compte Yoto.
+ * Reglages : le compte Yoto relie a ce compte, puis le compte de l'application lui-meme.
  *
  * Les cartes et le passeur ont leur page (Cartes) : on les manipule au quotidien, alors que la
  * connexion au compte ne se fait qu'une fois.
@@ -12,6 +12,7 @@ import { listMyCards } from '../../yoto/api.ts';
 import { AuthRequiredError } from '../../yoto/errors.ts';
 import { isConnected } from '../../yoto/oauth.ts';
 import { html, layout } from '../html.ts';
+import { accountPanels, currentAccount } from './account.ts';
 import { requireAuth } from './auth.ts';
 
 function accountSection(connected: boolean) {
@@ -23,6 +24,7 @@ function accountSection(connected: boolean) {
         ? html`
             <p class="alert ok">Connecté.</p>
             <p class="muted">
+              Ce compte Yoto n'est relié qu'au tien : chaque compte de l'application relie le sien.
               Se déconnecter efface les jetons stockés sur ce serveur. Les histoires déjà publiées
               continuent de jouer sur leurs cartes : elles vivent chez Yoto, pas ici.
             </p>
@@ -31,8 +33,12 @@ function accountSection(connected: boolean) {
             </form>
           `
         : html`
-            <p>L'application a besoin du compte Yoto pour publier les histoires.</p>
+            <p>L'application a besoin de ton compte Yoto pour publier tes histoires.</p>
             <a class="button" href="/auth/yoto/start">Se connecter à Yoto</a>
+            <p class="muted">
+              Yoto demandera ses identifiants à chaque fois : sur un appareil partagé, on ne relie
+              pas par mégarde le compte Yoto de quelqu'un d'autre.
+            </p>
           `}
 
       ${!hasOfflineAccess
@@ -96,19 +102,23 @@ function syncResult(report: SyncReport | { error: string }) {
 export async function settingsRoutes(app: FastifyInstance): Promise<void> {
   app.get('/reglages', { preHandler: requireAuth }, async (request, reply) => {
     const report = request.session.syncReport;
+    const flash = request.session.flash;
     delete request.session.syncReport;
+    delete request.session.flash;
     const connected = isConnected();
     return reply.type('text/html').send(
       layout(
         { title: 'Réglages', nav: 'settings' },
         html`
           <h1>Réglages</h1>
+          ${flash ? html`<p class="alert ${flash.kind}">${flash.text}</p>` : ''}
           ${accountSection(connected)}
           ${connected ? syncSection(report) : ''}
           <p class="muted">
             Les copies et le passeur se gèrent depuis
             <a href="/cartes">Cartes</a>.
           </p>
+          ${accountPanels(currentAccount())}
         `,
       ),
     );

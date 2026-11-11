@@ -5,11 +5,15 @@
  * invalide l'ancien. Tout le cycle charger-rafraichir-sauver est donc serialise derriere un
  * verrou, et le jeton pivote est persiste AVANT que le nouvel access token soit rendu a
  * l'appelant. Une seule course perdue deconnecte l'utilisateur.
+ *
+ * Chaque compte de l'application relie son propre compte Yoto : les jetons sont ranges dans les
+ * reglages du compte courant (voir accounts/context.ts), et le verrou est tenu par compte.
  */
 import { createHash, randomBytes } from 'node:crypto';
 
+import { currentAccountId } from '../accounts/context.ts';
 import { config } from '../config.ts';
-import { deleteSetting, getSetting, setSetting } from '../db/index.ts';
+import { deleteAccountSetting, getAccountSetting, setAccountSetting } from '../db/accounts.ts';
 import { AuthRequiredError, YotoError, messageFromBody } from './errors.ts';
 import type { TokenSet } from './types.ts';
 
@@ -45,6 +49,9 @@ export function authorizeUrl(challenge: string, state: string): string {
     state,
     code_challenge: challenge,
     code_challenge_method: 'S256',
+    // Plusieurs comptes peuvent passer par le meme navigateur : sans ceci, la session ouverte
+    // chez Yoto relierait d'office le compte Yoto du precedent.
+    prompt: 'login',
   });
   return `${config.yoto.authUrl}/authorize?${params}`;
 }
@@ -84,7 +91,7 @@ async function tokenRequest(
   if (!response.ok) {
     const { message, code } = messageFromBody(payload, `HTTP ${response.status}`);
     if (code === 'invalid_grant') {
-      deleteSetting(TOKENS_KEY);
+      deleteAccountSetting(TOKENS_KEY);
       throw new AuthRequiredError(`Session expiree (jeton de rafraichissement rejete) : ${message}`);
     }
     throw new YotoError(message, response.status, code);
@@ -111,7 +118,7 @@ async function tokenRequest(
 }
 
 function load(): TokenSet | undefined {
-  const raw = getSetting(TOKENS_KEY);
+  const raw = getAccountSetting(TOKENS_KEY);
   if (!raw) return undefined;
   try {
     return JSON.parse(raw) as TokenSet;
@@ -121,7 +128,7 @@ function load(): TokenSet | undefined {
 }
 
 function save(tokens: TokenSet): void {
-  setSetting(TOKENS_KEY, JSON.stringify(tokens));
+  setAccountSetting(TOKENS_KEY, JSON.stringify(tokens));
 }
 
 export function isConnected(): boolean {
@@ -130,7 +137,7 @@ export function isConnected(): boolean {
 }
 
 export function disconnect(): void {
-  deleteSetting(TOKENS_KEY);
+  deleteAccountSetting(TOKENS_KEY);
 }
 
 export async function exchangeCode(code: string, verifier: string): Promise<TokenSet> {
@@ -145,15 +152,21 @@ export async function exchangeCode(code: string, verifier: string): Promise<Toke
   return tokens;
 }
 
-/** Serialise tout le cycle charger-rafraichir-sauver. */
-let critical: Promise<unknown> = Promise.resolve();
+/** Serialise tout le cycle charger-rafraichir-sauver, compte par compte. */
+const critical = new Map<number, Promise<unknown>>();
 
 function exclusive<T>(work: () => Promise<T>): Promise<T> {
-  const next = critical.then(work, work);
-  critical = next.then(
+  const accountId = currentAccountId();
+  const next = (critical.get(accountId) ?? Promise.resolve()).then(work, work);
+  const settled = next.then(
     () => undefined,
     () => undefined,
   );
+  critical.set(accountId, settled);
+  // La file d'un compte inactif ne doit pas rester en memoire.
+  void settled.then(() => {
+    if (critical.get(accountId) === settled) critical.delete(accountId);
+  });
   return next;
 }
 

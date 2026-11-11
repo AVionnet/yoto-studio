@@ -5,17 +5,39 @@
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 
+-- Un compte de l'application. Chacun relie son propre compte Yoto et ne voit que ses histoires,
+-- ses contenus et ses cartes : toutes les tables de donnees portent account_id.
+CREATE TABLE IF NOT EXISTS accounts (
+  id            INTEGER PRIMARY KEY,
+  username      TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  password_hash TEXT NOT NULL,                  -- scrypt$sel$empreinte, voir accounts/password.ts
+  created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Reglages propres a un compte : jetons Yoto, uid du passeur.
+CREATE TABLE IF NOT EXISTS account_settings (
+  account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  key        TEXT NOT NULL,
+  value      TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (account_id, key)
+);
+
 -- Les contenus Yoto connus : un par histoire publiee, ou releve sur le passeur.
+-- Deux comptes peuvent connaitre le meme contenu (un meme compte Yoto relie deux fois) : l'unicite
+-- vaut par compte.
 CREATE TABLE IF NOT EXISTS cards (
   id                 INTEGER PRIMARY KEY,
-  card_id            TEXT NOT NULL UNIQUE,      -- identifiant Yoto, 5 caracteres
+  account_id         INTEGER REFERENCES accounts(id) ON DELETE CASCADE,
+  card_id            TEXT NOT NULL,             -- identifiant Yoto, 5 caracteres
   nickname           TEXT NOT NULL,             -- surnom historique, le plus souvent le titre
   title              TEXT,                      -- titre de l'histoire chez Yoto, quand on l'a vu
   ndef_url           TEXT,                      -- relevee par Web NFC ; sert a encoder une vierge
   track_count        INTEGER NOT NULL DEFAULT 0,-- pour verifier la limite de 100
   current_project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
   enrolled_at        TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
+  updated_at         TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (account_id, card_id)
 );
 
 -- Les puces vierges encodees : un tag physique porteur de l'URL d'un contenu.
@@ -26,15 +48,20 @@ CREATE TABLE IF NOT EXISTS cards (
 -- des cartes physiques qui existent dans le monde.
 CREATE TABLE IF NOT EXISTS card_tags (
   id         INTEGER PRIMARY KEY,
-  uid        TEXT UNIQUE,               -- serial de la puce, quand le telephone l'expose
+  account_id INTEGER REFERENCES accounts(id) ON DELETE CASCADE,
+  uid        TEXT,                      -- serial de la puce, quand le telephone l'expose
   name       TEXT,                      -- « la rouge », pour la reconnaitre parmi les autres
   card_id    TEXT NOT NULL,
-  written_at TEXT NOT NULL DEFAULT (datetime('now'))
+  written_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (account_id, uid)
 );
 
 -- Un projet = une fabrication, de la source jusqu'a la publication.
+-- card_id n'est plus une cle etrangere : un contenu est unique par compte, pas globalement.
+-- Retirer un contenu remet a NULL les projets qui le designaient (voir db/cards.ts, unenroll).
 CREATE TABLE IF NOT EXISTS projects (
   id           INTEGER PRIMARY KEY,
+  account_id   INTEGER REFERENCES accounts(id) ON DELETE CASCADE,
   title        TEXT NOT NULL,
   state        TEXT NOT NULL DEFAULT 'draft'
                CHECK (state IN ('draft','fetching','segmenting','reviewing',
@@ -42,7 +69,7 @@ CREATE TABLE IF NOT EXISTS projects (
   source_kind  TEXT CHECK (source_kind IN ('upload','youtube','rss','voice')),
   source_ref   TEXT,                            -- URL, GUID d'episode, nom de fichier
   source_path  TEXT,                            -- fichier long telecharge, purge apres publication
-  card_id      TEXT REFERENCES cards(card_id) ON DELETE SET NULL,
+  card_id      TEXT,
   cover_url    TEXT,                            -- donne metadata.cover.imageL
   artwork_json TEXT,                            -- theme, sous-titre, choix de mise en page
   error        TEXT,
@@ -75,6 +102,7 @@ CREATE TABLE IF NOT EXISTS tracks (
 -- File de travaux longs. Un worker in-process, reprise au demarrage.
 CREATE TABLE IF NOT EXISTS jobs (
   id           INTEGER PRIMARY KEY,
+  account_id   INTEGER REFERENCES accounts(id) ON DELETE CASCADE,
   project_id   INTEGER REFERENCES projects(id) ON DELETE CASCADE,
   kind         TEXT NOT NULL,                   -- fetch | segment | upload | artwork
   payload_json TEXT NOT NULL DEFAULT '{}',
@@ -96,7 +124,8 @@ CREATE TABLE IF NOT EXISTS jobs (
 CREATE INDEX IF NOT EXISTS jobs_pending ON jobs (state, id) WHERE state IN ('queued','running');
 CREATE INDEX IF NOT EXISTS tracks_project ON tracks (project_id, idx);
 
--- Jetons Yoto, cookies YouTube, reglages divers.
+-- Reglages globaux. Les jetons Yoto et le passeur d'avant les comptes y attendent le premier
+-- compte cree, qui les reprend (voir db/accounts.ts).
 CREATE TABLE IF NOT EXISTS settings (
   key        TEXT PRIMARY KEY,
   value      TEXT NOT NULL,

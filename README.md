@@ -20,6 +20,17 @@ carte MYO et l'imprimer. Application personnelle, non affiliée à Yoto.
 | **Décorer** | Étiquette PNG à imprimer puis découper à la Cricut, aux dimensions de la carte |
 | **Écouter** | Émulateur de lecteur, avec streaming et déplacement dans la piste |
 
+## Comptes
+
+Chaque personne a son compte (identifiant et mot de passe) et y relie **son propre compte Yoto** :
+elle ne voit que ses histoires, ses contenus et ses cartes. La création de compte demande le code
+d'invitation `INVITE_CODE` — l'application est sur une URL publique et paie DeepSeek. Réglages
+permet de changer de mot de passe (les autres appareils sont déconnectés) ou de supprimer le compte.
+
+Côté code, le compte courant voyage avec le fil d'exécution (`src/accounts/context.ts`) : posé à
+chaque requête et pour chaque travail du worker, il est lu par la base et le client Yoto. Un accès
+hors de tout compte lève une erreur plutôt que de lire les données d'un autre.
+
 ## Histoires et cartes
 
 Une **histoire** est ce qu'on écoute : elle vit chez Yoto sous un identifiant de contenu
@@ -102,7 +113,7 @@ pour l'impression.
 npm install
 cp .env.example .env     # puis renseigner les clés
 npm run dev              # http://localhost:3000
-npm test                 # 77 tests, hors réseau
+npm test                 # 119 tests, hors réseau
 npm run typecheck
 ```
 

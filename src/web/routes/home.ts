@@ -15,6 +15,7 @@ import { listMyCards } from '../../yoto/api.ts';
 import { listProjectSummaries, type ProjectSummary } from '../../db/projects.ts';
 import { isConnected } from '../../yoto/oauth.ts';
 import { html, layout, raw } from '../html.ts';
+import { sessionAccount } from './auth.ts';
 import { motifCells } from '../motifs.ts';
 
 /** Aplats de couleur, parcourus en boucle pour que deux voisines diffèrent. */
@@ -152,7 +153,10 @@ function landingPage(): string {
             Fabriquer des cartes à écouter pour le lecteur Yoto, sans rien connaître au découpage
             audio ni aux formats de fichiers.
           </p>
-          <a class="button" href="/connexion">Entrer</a>
+          <span class="hero-actions">
+            <a class="button" href="/connexion">Entrer</a>
+            <a class="button ghost" href="/inscription">Créer un compte</a>
+          </span>
         </section>
 
         <div class="card-grid">
@@ -178,7 +182,7 @@ function landingPage(): string {
 export async function homeRoutes(app: FastifyInstance): Promise<void> {
   app.get('/', async (request, reply) => {
     // Page publique tant qu'on n'est pas entré : la bibliothèque, elle, reste privée.
-    if (!request.session.authenticated) {
+    if (sessionAccount(request) === undefined) {
       return reply.type('text/html').send(landingPage());
     }
 

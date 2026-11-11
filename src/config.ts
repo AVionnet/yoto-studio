@@ -38,7 +38,15 @@ export const config = {
   port: Number(optional('PORT', '3000')),
   publicBaseUrl,
   sessionSecret: sessionSecret(),
-  appPassword: isProduction ? required('APP_PASSWORD') : process.env.APP_PASSWORD?.trim() || '',
+  /**
+   * Code a fournir pour creer un compte. L'application est sur une URL publique et paie DeepSeek :
+   * l'inscription ne peut pas y etre libre. APP_PASSWORD, l'ancien mot de passe unique, sert de
+   * repli pour qu'une mise a jour n'exige pas de toucher au .env. Vide en dev : inscription libre.
+   */
+  inviteCode:
+    process.env.INVITE_CODE?.trim() ||
+    process.env.APP_PASSWORD?.trim() ||
+    (isProduction ? required('INVITE_CODE') : ''),
 
   dataDir: resolve(optional('DATA_DIR', './data')),
   mediaDir: resolve(optional('MEDIA_DIR', './media')),

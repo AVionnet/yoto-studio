@@ -66,3 +66,13 @@ export function sqliteSessionStore(): SessionStore {
     },
   };
 }
+
+/**
+ * Ferme les sessions d'un compte, sauf celle qu'on garde : apres un changement de mot de passe,
+ * un appareil oublie ou vole ne doit pas rester connecte avec l'ancien.
+ */
+export function dropSessions(accountId: number, keepSid?: string): void {
+  db()
+    .prepare(`DELETE FROM sessions WHERE json_extract(data, '$.accountId') = ? AND sid IS NOT ?`)
+    .run(accountId, keepSid ?? null);
+}

@@ -1,4 +1,10 @@
-/** Projets et pistes. */
+/**
+ * Projets et pistes, cloisonnes par compte : un projet d'un autre compte n'existe pas.
+ *
+ * Les pistes se designent par leur projet ; les routes ne les atteignent qu'apres avoir trouve
+ * le projet ici (voir le garde de web/app.ts), et le worker n'execute que les travaux du compte.
+ */
+import { currentAccountId as me } from '../accounts/context.ts';
 import { db } from './index.ts';
 
 export type ProjectState =
@@ -44,6 +50,9 @@ export interface TrackRow {
   icon_url: string | null;
 }
 
+/** Condition SQL : la piste appartient a un projet du compte courant (parametre : le compte). */
+const OWNED = 'project_id IN (SELECT id FROM projects WHERE account_id = ?)';
+
 export function createProject(fields: {
   title: string;
   sourceKind: string;
@@ -51,38 +60,46 @@ export function createProject(fields: {
 }): number {
   const info = db()
     .prepare(
-      `INSERT INTO projects (title, source_kind, card_id, state) VALUES (?, ?, ?, 'draft')`,
+      `INSERT INTO projects (account_id, title, source_kind, card_id, state)
+       VALUES (?, ?, ?, ?, 'draft')`,
     )
-    .run(fields.title, fields.sourceKind, fields.cardId ?? null);
+    .run(me(), fields.title, fields.sourceKind, fields.cardId ?? null);
   return Number(info.lastInsertRowid);
 }
 
 export function getProject(id: number): Project | undefined {
-  return db().prepare('SELECT * FROM projects WHERE id = ?').get(id) as Project | undefined;
+  return db().prepare('SELECT * FROM projects WHERE id = ? AND account_id = ?').get(id, me()) as
+    | Project
+    | undefined;
 }
 
 /** L'histoire qui porte ce titre, quand un contenu Yoto n'est rattache a aucune. */
 export function findProjectByTitle(title: string): Project | undefined {
   return db()
-    .prepare('SELECT * FROM projects WHERE title = ? ORDER BY id DESC LIMIT 1')
-    .get(title) as Project | undefined;
+    .prepare('SELECT * FROM projects WHERE title = ? AND account_id = ? ORDER BY id DESC LIMIT 1')
+    .get(title, me()) as Project | undefined;
 }
 
 /** Le projet le plus recent qui publie sur ce contenu. */
 export function findProjectByCard(cardId: string): Project | undefined {
   return db()
-    .prepare('SELECT * FROM projects WHERE card_id = ? ORDER BY id DESC LIMIT 1')
-    .get(cardId) as Project | undefined;
+    .prepare('SELECT * FROM projects WHERE card_id = ? AND account_id = ? ORDER BY id DESC LIMIT 1')
+    .get(cardId, me()) as Project | undefined;
 }
 
 export function listProjects(): Project[] {
-  return db().prepare('SELECT * FROM projects ORDER BY id DESC').all() as Project[];
+  return db()
+    .prepare('SELECT * FROM projects WHERE account_id = ? ORDER BY id DESC')
+    .all(me()) as Project[];
 }
 
 export function setProjectState(id: number, state: ProjectState, error?: string | null): void {
   db()
-    .prepare(`UPDATE projects SET state = ?, error = ?, updated_at = datetime('now') WHERE id = ?`)
-    .run(state, error ?? null, id);
+    .prepare(
+      `UPDATE projects SET state = ?, error = ?, updated_at = datetime('now')
+       WHERE id = ? AND account_id = ?`,
+    )
+    .run(state, error ?? null, id, me());
 }
 
 export interface ProjectSummary extends Project {
@@ -103,28 +120,33 @@ export function listProjectSummaries(): ProjectSummary[] {
               (SELECT icon_url FROM tracks WHERE project_id = p.id AND idx = 0) AS icon_url
        FROM projects p
        LEFT JOIN tracks t ON t.project_id = p.id
+       WHERE p.account_id = ?
        GROUP BY p.id
        ORDER BY p.id DESC`,
     )
-    .all() as ProjectSummary[];
+    .all(me()) as ProjectSummary[];
 }
 
 export function deleteProject(id: number): void {
   // Les pistes et les travaux partent en cascade (ON DELETE CASCADE).
-  db().prepare('DELETE FROM projects WHERE id = ?').run(id);
+  db().prepare('DELETE FROM projects WHERE id = ? AND account_id = ?').run(id, me());
 }
 
 export function setProjectCard(id: number, cardId: string): void {
   db()
-    .prepare(`UPDATE projects SET card_id = ?, updated_at = datetime('now') WHERE id = ?`)
-    .run(cardId, id);
+    .prepare(
+      `UPDATE projects SET card_id = ?, updated_at = datetime('now') WHERE id = ? AND account_id = ?`,
+    )
+    .run(cardId, id, me());
 }
 
 /** Image de couverture, affichee dans la bibliotheque de l'app Yoto. */
 export function setProjectCover(id: number, url: string | null): void {
   db()
-    .prepare(`UPDATE projects SET cover_url = ?, updated_at = datetime('now') WHERE id = ?`)
-    .run(url, id);
+    .prepare(
+      `UPDATE projects SET cover_url = ?, updated_at = datetime('now') WHERE id = ? AND account_id = ?`,
+    )
+    .run(url, id, me());
 }
 
 /** Depose un long enregistrement en attente de decoupage : bascule le projet en revue. */
@@ -132,9 +154,9 @@ export function setProjectSource(id: number, path: string): void {
   db()
     .prepare(
       `UPDATE projects SET source_path = ?, state = 'reviewing', updated_at = datetime('now')
-       WHERE id = ?`,
+       WHERE id = ? AND account_id = ?`,
     )
-    .run(path, id);
+    .run(path, id, me());
 }
 
 /** Le decoupage est valide et les pistes existent : le fichier long ne sert plus. */
@@ -142,9 +164,9 @@ export function clearProjectSource(id: number): void {
   db()
     .prepare(
       `UPDATE projects SET source_path = NULL, state = 'draft', updated_at = datetime('now')
-       WHERE id = ?`,
+       WHERE id = ? AND account_id = ?`,
     )
-    .run(id);
+    .run(id, me());
 }
 
 export function addTrack(fields: {
@@ -160,16 +182,17 @@ export function addTrack(fields: {
   db()
     .prepare(
       `INSERT INTO tracks (project_id, idx, title, text, start_ms, end_ms, file_path)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       SELECT id, ?, ?, ?, ?, ?, ? FROM projects WHERE id = ? AND account_id = ?`,
     )
     .run(
-      fields.projectId,
       fields.idx,
       fields.title,
       fields.text ?? null,
       fields.startMs ?? 0,
       fields.endMs ?? 0,
       fields.filePath ?? null,
+      fields.projectId,
+      me(),
     );
 }
 
@@ -177,15 +200,15 @@ export function addTrack(fields: {
 export function setTrackFile(projectId: number, idx: number, filePath: string, durationMs: number): void {
   db()
     .prepare(
-      `UPDATE tracks SET file_path = ?, duration_ms = ? WHERE project_id = ? AND idx = ?`,
+      `UPDATE tracks SET file_path = ?, duration_ms = ? WHERE project_id = ? AND idx = ? AND ${OWNED}`,
     )
-    .run(filePath, durationMs, projectId, idx);
+    .run(filePath, durationMs, projectId, idx, me());
 }
 
 export function listTracks(projectId: number): TrackRow[] {
   return db()
-    .prepare('SELECT * FROM tracks WHERE project_id = ? ORDER BY idx')
-    .all(projectId) as TrackRow[];
+    .prepare(`SELECT * FROM tracks WHERE project_id = ? AND ${OWNED} ORDER BY idx`)
+    .all(projectId, me()) as TrackRow[];
 }
 
 /**
@@ -200,8 +223,11 @@ export function setTrackIcon(
   url: string | null = null,
 ): void {
   db()
-    .prepare(`UPDATE tracks SET icon_media_id = ?, icon_url = ? WHERE project_id = ? AND idx = ?`)
-    .run(mediaId, mediaId ? url : null, projectId, idx);
+    .prepare(
+      `UPDATE tracks SET icon_media_id = ?, icon_url = ?
+       WHERE project_id = ? AND idx = ? AND ${OWNED}`,
+    )
+    .run(mediaId, mediaId ? url : null, projectId, idx, me());
 }
 
 /** Niveau mesure en tete et en queue d'une piste : sert au controle de coupe (<= -40 dB). */
@@ -212,8 +238,8 @@ export function setTrackEdges(
   tailDb: number | null,
 ): void {
   db()
-    .prepare(`UPDATE tracks SET head_db = ?, tail_db = ? WHERE project_id = ? AND idx = ?`)
-    .run(headDb, tailDb, projectId, idx);
+    .prepare(`UPDATE tracks SET head_db = ?, tail_db = ? WHERE project_id = ? AND idx = ? AND ${OWNED}`)
+    .run(headDb, tailDb, projectId, idx, me());
 }
 
 export function setTrackTranscode(
@@ -226,7 +252,7 @@ export function setTrackTranscode(
   db()
     .prepare(
       `UPDATE tracks SET transcoded_sha256 = ?, duration_ms = ?, file_size = ?
-       WHERE project_id = ? AND idx = ?`,
+       WHERE project_id = ? AND idx = ? AND ${OWNED}`,
     )
-    .run(sha256, durationMs, fileSize, projectId, idx);
+    .run(sha256, durationMs, fileSize, projectId, idx, me());
 }
