@@ -12,7 +12,7 @@ carte MYO et l'imprimer. Application personnelle, non affiliée à Yoto.
 |---|---|
 | **Écrire** | Une histoire originale en chapitres, via DeepSeek, adaptée à l'âge de l'enfant |
 | **Raconter** | Enregistrement au micro du navigateur, un chapitre par piste |
-| **Ingérer** | Dépôt de fichiers audio, ou téléchargement depuis une adresse YouTube |
+| **Ingérer** | Dépôt de fichiers audio, ou téléchargement depuis une adresse YouTube — vidéo seule, ou playlist entière à raison d'un chapitre par vidéo |
 | **Découper** | Détection de silences et contrôle automatique des coupes *(sans interface à ce jour)* |
 | **Publier** | Upload, transcodage et création du contenu MYO par l'API officielle |
 | **Encoder** | Recopier l'adresse d'un contenu sur une carte NFC vierge, par Web NFC |
@@ -113,7 +113,7 @@ pour l'impression.
 npm install
 cp .env.example .env     # puis renseigner les clés
 npm run dev              # http://localhost:3000
-npm test                 # 119 tests, hors réseau
+npm test                 # 124 tests, hors réseau
 npm run typecheck
 ```
 

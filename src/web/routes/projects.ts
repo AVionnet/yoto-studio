@@ -53,7 +53,7 @@ import {
 import { AUDIO_EXTENSIONS, MAX_TRACKS_PER_CARD } from '../../pipeline/upload.ts';
 import { drawCover, drawIcon } from '../../sources/artwork.ts';
 import { isConfigured } from '../../sources/deepseek.ts';
-import { probe } from '../../sources/youtube.ts';
+import { playlistIdOf, probe, probePlaylist } from '../../sources/youtube.ts';
 import {
   deleteCard,
   myIcons,
@@ -116,8 +116,9 @@ function newProjectPage(token: string, error?: string): string {
         <input type="hidden" name="token" value="${token}">
 
         <label for="title">Titre de l'histoire</label>
-        <input id="title" name="title" required maxlength="140"
+        <input id="title" name="title" maxlength="140"
                placeholder="Jack et le haricot magique">
+        <p class="muted">Facultatif pour YouTube : le titre de la vidéo ou de la playlist sert alors.</p>
 
         <div class="tabs" data-tabs>
           <div class="tablist" role="tablist" aria-label="Source audio">
@@ -126,10 +127,13 @@ function newProjectPage(token: string, error?: string): string {
           </div>
 
           <div class="tabpanel" data-panel="youtube" role="tabpanel">
-            <label for="youtubeUrl">Adresse de la vidéo</label>
+            <label for="youtubeUrl">Adresse de la vidéo ou de la playlist</label>
             <input id="youtubeUrl" name="youtubeUrl" type="url"
-                   placeholder="https://www.youtube.com/watch?v=…">
-            <p class="muted">La bande son est extraite, la vidéo est ignorée.</p>
+                   placeholder="https://www.youtube.com/playlist?list=…">
+            <p class="muted">
+              La bande son est extraite, la vidéo est ignorée. Une playlist donne un chapitre par
+              vidéo, dans l'ordre, jusqu'à ${MAX_TRACKS_PER_CARD}.
+            </p>
           </div>
 
           <div class="tabpanel" data-panel="fichiers" role="tabpanel">
@@ -422,7 +426,11 @@ function projectHead(project: Project, tracks: TrackRow[]): Html {
 function jobPanel(project: Project, job: Job | undefined, running: boolean): Html | string {
   if (!job) return '';
   const built = job.state === 'done' && job.kind === 'build';
-  const isNew = built && (JSON.parse(job.result_json ?? '{}') as { isNew?: boolean }).isNew;
+  const result = built
+    ? (JSON.parse(job.result_json ?? '{}') as { isNew?: boolean; skipped?: number })
+    : {};
+  const isNew = result.isNew;
+  const skipped = result.skipped ?? 0;
   return html`
     <section class="panel">
       <div id="etat" data-project="${project.id}" data-running="${running ? '1' : '0'}">
@@ -444,6 +452,10 @@ function jobPanel(project: Project, job: Job | undefined, running: boolean): Htm
               ? html`Contenu créé chez Yoto. Reste à le mettre sur une carte : voir
                   <a href="#carte">« Sur quelles cartes »</a>.`
               : html`Contenu mis à jour : les cartes qui le portent jouent la nouvelle version.`}
+            ${skipped > 0
+              ? html`${skipped} vidéo(s) de la playlist, indisponible(s) ou privée(s), ont été
+                  sautée(s).`
+              : ''}
           </p>`
         : ''}
     </section>
@@ -739,12 +751,12 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
       // Le jeton est brûlé : un retour arrière suivi d'un renvoi ne repassera pas.
       delete request.session.formToken;
 
-      const title = fields.get('title')?.trim() ?? '';
+      let title = fields.get('title')?.trim() ?? '';
       const cardId = fields.get('cardId')?.trim() ?? '';
       const youtubeUrl = fields.get('youtubeUrl')?.trim() ?? '';
       const autoSplit = fields.get('autoSplit') === '1';
 
-      if (!title) {
+      if (!title && !youtubeUrl) {
         return reply.type('text/html').send(reissue(request, 'Le titre est obligatoire.'));
       }
       if (!youtubeUrl && staged.length === 0) {
@@ -763,9 +775,33 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
 
       // Sonde avant de creer quoi que ce soit : une URL morte doit echouer tout de suite,
       // avec un message utile, plutot que dans le worker cinq minutes plus tard.
+      let playlist: { id: string; title: string }[] | undefined;
       if (youtubeUrl) {
         try {
-          await probe(youtubeUrl);
+          if (playlistIdOf(youtubeUrl)) {
+            const found = await probePlaylist(youtubeUrl);
+            if (found.entries.length === 0) {
+              return reply
+                .type('text/html')
+                .send(reissue(request, "Cette playlist ne contient aucune vidéo lisible."));
+            }
+            if (found.entries.length > MAX_TRACKS_PER_CARD) {
+              return reply
+                .type('text/html')
+                .send(
+                  reissue(
+                    request,
+                    `Cette playlist compte ${found.entries.length} vidéos : une carte Yoto en ` +
+                      `accepte ${MAX_TRACKS_PER_CARD} au plus.`,
+                  ),
+                );
+            }
+            playlist = found.entries.map(({ id, title: name }) => ({ id, title: name.slice(0, 100) }));
+            title ||= found.title.slice(0, 140);
+          } else {
+            const media = await probe(youtubeUrl);
+            title ||= media.title.slice(0, 140);
+          }
         } catch (error) {
           const hint = (error as { hint?: string }).hint;
           return reply
@@ -809,11 +845,10 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
         }
       }
 
-      enqueue(
-        'build',
-        { projectId, title, ...(cardId ? { cardId } : {}), ...(youtubeUrl ? { youtubeUrl } : {}) },
-        projectId,
-      );
+      let source: { playlist: typeof playlist } | { youtubeUrl: string } | object = {};
+      if (playlist) source = { playlist };
+      else if (youtubeUrl) source = { youtubeUrl };
+      enqueue('build', { projectId, title, ...(cardId ? { cardId } : {}), ...source }, projectId);
       return reply.redirect(`/projets/${projectId}`);
     } finally {
       if (accepted) inFlight.delete(accepted);

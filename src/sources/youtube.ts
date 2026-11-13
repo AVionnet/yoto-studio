@@ -14,11 +14,14 @@ import { config } from '../config.ts';
 
 export class SourceError extends Error {
   readonly hint: string | undefined;
+  /** Vrai quand seule cette video est en cause : dans une playlist, on passe a la suivante. */
+  readonly onlyThisVideo: boolean;
 
-  constructor(message: string, hint?: string) {
+  constructor(message: string, hint?: string, onlyThisVideo = false) {
     super(message);
     this.name = 'SourceError';
     this.hint = hint;
+    this.onlyThisVideo = onlyThisVideo;
   }
 }
 
@@ -62,8 +65,13 @@ function translate(stderr: string): SourceError {
       'YouTube casse yt-dlp toutes les quelques semaines : commence par le mettre à jour.',
     );
   }
-  if (text.includes('video unavailable') || text.includes('private video')) {
-    return new SourceError('Cette vidéo est indisponible ou privée.');
+  if (
+    text.includes('video unavailable') ||
+    text.includes('private video') ||
+    text.includes('not available in your country') ||
+    text.includes('confirm your age')
+  ) {
+    return new SourceError('Cette vidéo est indisponible ou privée.', undefined, true);
   }
   if (text.includes('is not a valid url')) {
     return new SourceError("Cette adresse n'est pas reconnue.");
@@ -97,18 +105,108 @@ export async function probe(url: string): Promise<RemoteMedia> {
   }
 }
 
+export interface PlaylistEntry {
+  id: string;
+  title: string;
+  durationSeconds: number | undefined;
+}
+
+export interface RemotePlaylist {
+  id: string;
+  title: string;
+  entries: PlaylistEntry[];
+  /** Videos ecartees d'office : privees, supprimees, ou en direct. */
+  skipped: number;
+}
+
+/**
+ * L'identifiant de playlist porte par une adresse, s'il faut la traiter comme telle.
+ *
+ * `watch?v=…&list=…` est la forme qu'on partage depuis une playlist : on la prend entiere.
+ * Les « mix » (RD…) sont des radios generees a l'infini pour chaque visiteur, pas une liste
+ * qu'on a composee : la video seule est ce qu'on voulait.
+ */
+export function playlistIdOf(url: string): string | undefined {
+  try {
+    const list = new URL(url).searchParams.get('list');
+    if (!list || list.startsWith('RD')) return undefined;
+    return list;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Les titres que YouTube met a la place d'une video qu'on ne peut plus lire. */
+const UNAVAILABLE_TITLES = new Set(['[Private video]', '[Deleted video]', '[Unavailable video]']);
+
+/** Lecture a plat : titres et identifiants seuls, quelques secondes meme pour cent videos. */
+export async function probePlaylist(url: string): Promise<RemotePlaylist> {
+  const listId = playlistIdOf(url);
+  if (!listId) throw new SourceError("Cette adresse n'est pas celle d'une playlist.");
+  const canonical = `https://www.youtube.com/playlist?list=${encodeURIComponent(listId)}`;
+
+  let data: Record<string, unknown>;
+  try {
+    const args = ['--flat-playlist', '--yes-playlist', '--no-progress', '--no-warnings'];
+    if (config.ytdlp.cookiesFile) args.push('--cookies', config.ytdlp.cookiesFile);
+    const { stdout } = await execa('yt-dlp', [...args, '--dump-single-json', canonical], {
+      timeout: 60_000,
+    });
+    data = JSON.parse(stdout) as Record<string, unknown>;
+  } catch (error) {
+    const stderr = (error as { stderr?: string }).stderr ?? String(error);
+    if ((error as { code?: string }).code === 'ENOENT') {
+      throw new SourceError('yt-dlp est introuvable sur ce serveur.', 'Installe-le : brew install yt-dlp');
+    }
+    if (stderr.toLowerCase().includes('does not exist')) {
+      throw new SourceError("Cette playlist n'existe pas, ou elle est privée.");
+    }
+    throw translate(stderr);
+  }
+
+  const raw = Array.isArray(data['entries']) ? (data['entries'] as Record<string, unknown>[]) : [];
+  const entries: PlaylistEntry[] = [];
+  let skipped = 0;
+  for (const entry of raw) {
+    const id = typeof entry['id'] === 'string' ? entry['id'] : '';
+    const title = typeof entry['title'] === 'string' ? entry['title'] : '';
+    const live = entry['live_status'] === 'is_live' || entry['live_status'] === 'is_upcoming';
+    if (!id || UNAVAILABLE_TITLES.has(title) || live) {
+      skipped += 1;
+      continue;
+    }
+    entries.push({
+      id,
+      title: title || 'Sans titre',
+      durationSeconds: typeof entry['duration'] === 'number' ? entry['duration'] : undefined,
+    });
+  }
+
+  return {
+    id: listId,
+    title: typeof data['title'] === 'string' && data['title'] ? data['title'] : 'Playlist',
+    entries,
+    skipped,
+  };
+}
+
+export const videoUrl = (id: string): string =>
+  `https://www.youtube.com/watch?v=${encodeURIComponent(id)}`;
+
 export type DownloadProgress = (message: string) => void;
 
 /**
- * Telecharge la piste audio dans `targetDir` et rend le chemin du fichier.
- * On extrait en m4a : c'est ce que le lecteur accepte, et ca evite un ré-encodage cote Yoto.
+ * Telecharge la piste audio dans `targetDir`, sous le nom `basename.<ext>`, et rend le chemin
+ * du fichier. On extrait en m4a : c'est ce que le lecteur accepte, et ca evite un ré-encodage
+ * cote Yoto.
  */
 export async function downloadAudio(
   url: string,
   targetDir: string,
   onProgress: DownloadProgress = () => {},
+  basename = 'source',
 ): Promise<string> {
-  const template = join(targetDir, 'source.%(ext)s');
+  const template = join(targetDir, `${basename}.%(ext)s`);
 
   try {
     onProgress('Téléchargement…');
@@ -132,7 +230,9 @@ export async function downloadAudio(
     throw translate((error as { stderr?: string }).stderr ?? String(error));
   }
 
-  const produced = (await readdir(targetDir)).filter((name) => name.startsWith('source.'));
+  const produced = (await readdir(targetDir)).filter(
+    (name) => name.startsWith(`${basename}.`) && !name.endsWith('.part'),
+  );
   const file = produced.find((name) => name.endsWith('.m4a')) ?? produced[0];
   if (!file) throw new SourceError("yt-dlp n'a produit aucun fichier.");
   return join(targetDir, file);

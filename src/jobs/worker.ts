@@ -5,7 +5,7 @@
  * bornes, sondage des transcodages en une passe), et une KVM d'entree de gamme n'a rien a
  * gagner a lancer deux ffmpeg en meme temps.
  */
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { runAs } from '../accounts/context.ts';
@@ -25,7 +25,7 @@ import { drawIcon } from '../sources/artwork.ts';
 import { uploadIcon } from '../yoto/api.ts';
 import { titleFromFilename } from '../pipeline/publish.ts';
 import { CancelledError, uploadAndTranscode } from '../pipeline/upload.ts';
-import { downloadAudio } from '../sources/youtube.ts';
+import { downloadAudio, SourceError, videoUrl } from '../sources/youtube.ts';
 import {
   claimNext,
   fail,
@@ -46,6 +46,8 @@ export interface BuildPayload {
   title: string;
   /** Present quand la source est une URL a telecharger. */
   youtubeUrl?: string;
+  /** Present quand la source est une playlist : une video par chapitre, dans l'ordre. */
+  playlist?: { id: string; title: string }[];
 }
 
 export const projectDir = (projectId: number): string =>
@@ -55,9 +57,10 @@ export const projectDir = (projectId: number): string =>
  * Une seule piste pour l'instant : le decoupage en chapitres arrive au lot suivant, avec
  * l'ecran de validation des frontieres.
  */
-async function ingest(job: Job, payload: BuildPayload): Promise<void> {
-  if (!payload.youtubeUrl) return;
-  if (listTracks(payload.projectId).length > 0) return; // deja telecharge, reprise
+async function ingest(job: Job, payload: BuildPayload): Promise<number> {
+  if (payload.playlist) return ingestPlaylist(job, payload, payload.playlist);
+  if (!payload.youtubeUrl) return 0;
+  if (listTracks(payload.projectId).length > 0) return 0; // deja telecharge, reprise
 
   setProjectState(payload.projectId, 'fetching');
   reportProgress(job.id, 'Téléchargement de la source…', 0, 1);
@@ -75,12 +78,77 @@ async function ingest(job: Job, payload: BuildPayload): Promise<void> {
     title: project?.title || titleFromFilename(file),
     filePath: file,
   });
+  return 0;
+}
+
+/**
+ * Une video par chapitre ; rend le nombre de videos sautees. Les fichiers deja presents sont gardes : un redemarrage du serveur
+ * au milieu d'une playlist de quarante videos reprend la ou il s'etait arrete. Les pistes ne
+ * sont creees qu'a la fin, d'un coup, pour que leur presence signifie « tout est la ».
+ *
+ * Une video indisponible (privee, bloquee dans le pays) est sautee ; toute autre erreur —
+ * verification anti-robot, yt-dlp absent — touchera aussi les suivantes, on s'arrete.
+ */
+async function ingestPlaylist(
+  job: Job,
+  payload: BuildPayload,
+  entries: { id: string; title: string }[],
+): Promise<number> {
+  if (listTracks(payload.projectId).length > 0) return 0;
+
+  setProjectState(payload.projectId, 'fetching');
+  const directory = projectDir(payload.projectId);
+  await mkdir(directory, { recursive: true });
+
+  const done: { title: string; file: string }[] = [];
+  let skipped = 0;
+
+  for (const [index, entry] of entries.entries()) {
+    if (isCancelling(job.id)) throw new CancelledError();
+    const basename = String(index + 1).padStart(3, '0');
+    const label = `Téléchargement ${index + 1}/${entries.length} : « ${entry.title} »`;
+    reportProgress(job.id, label, index, entries.length);
+
+    const existing = (await readdir(directory)).find(
+      (name) => name.startsWith(`${basename}.`) && !name.endsWith('.part'),
+    );
+    if (existing) {
+      done.push({ title: entry.title, file: join(directory, existing) });
+      continue;
+    }
+
+    try {
+      const file = await downloadAudio(videoUrl(entry.id), directory, () => {}, basename);
+      done.push({ title: entry.title, file });
+    } catch (error) {
+      if (error instanceof SourceError && error.onlyThisVideo) {
+        skipped += 1;
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  if (done.length === 0) throw new Error("Aucune vidéo de la playlist n'a pu être téléchargée.");
+
+  done.forEach((entry, idx) =>
+    addTrack({ projectId: payload.projectId, idx, title: entry.title, filePath: entry.file }),
+  );
+  reportProgress(
+    job.id,
+    skipped === 0
+      ? `${done.length} chapitre(s) téléchargé(s).`
+      : `${done.length} chapitre(s) téléchargé(s), ${skipped} vidéo(s) indisponible(s) sautée(s).`,
+    entries.length,
+    entries.length,
+  );
+  return skipped;
 }
 
 async function runBuild(job: Job): Promise<unknown> {
   const payload = JSON.parse(job.payload_json) as BuildPayload;
 
-  await ingest(job, payload);
+  const skipped = await ingest(job, payload);
   if (isCancelling(job.id)) throw new CancelledError();
 
   const rows = listTracks(payload.projectId);
@@ -138,7 +206,7 @@ async function runBuild(job: Job): Promise<unknown> {
   }
 
   setProjectState(payload.projectId, 'published');
-  return { cardId: card.cardId, title: card.title, trackCount: uploaded.length, isNew };
+  return { cardId: card.cardId, title: card.title, trackCount: uploaded.length, isNew, skipped };
 }
 
 export interface ArtworkPayload {
